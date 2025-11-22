@@ -603,7 +603,6 @@
       selectedShape = group;
       updateMoveGizmoVisibility(); // <-- Add this line
       updateRotateGizmoVisibility(); // <-- Add this line
-      updateScaleGizmoVisibility(); // <-- NEW: refresh scale gizmo on selection
     }
 
     // When deselecting, revert outline to orange if it was lime green
@@ -628,7 +627,6 @@
       }
       updateMoveGizmoVisibility(); // <-- Add this line
       updateRotateGizmoVisibility(); // <-- Add this line
-      updateScaleGizmoVisibility(); // <-- NEW: refresh scale gizmo on deselect
     }
 
     function deleteSelectedShape(recordAction = true) {
@@ -745,8 +743,7 @@ const ActionType = {
   MOVE: 'move',
   ADD_MULTI: 'add-multi',
   REMOVE_MULTI: 'remove-multi',
-  ROTATE: 'rotate',  // Add this line
-  SCALE: 'scale'     // <-- NEW: scale action
+  ROTATE: 'rotate'  // Add this line
 };
 
 // Replace the existing undo function
@@ -808,15 +805,6 @@ function undo() {
         center.divideScalar(selectedShapes.length);
         rotateGizmo.position.copy(center);
       }
-      redoStack.push(action);
-      break;
-
-    case ActionType.SCALE:
-      // Restore previous scales (and positions if stored)
-      action.shapes.forEach(({ shape, oldScale, oldPosition }) => {
-        shape.scale.copy(oldScale);
-        if (oldPosition) shape.position.copy(oldPosition);
-      });
       redoStack.push(action);
       break;
   }
@@ -883,15 +871,6 @@ function redo() {
         center.divideScalar(action.shapes.length);
         rotateGizmo.position.copy(center);
       }
-      undoStack.push(action);
-      break;
-
-    case ActionType.SCALE:
-      // Reapply new scales (and positions if stored)
-      action.shapes.forEach(({ shape, newScale, newPosition }) => {
-        shape.scale.copy(newScale);
-        if (newPosition) shape.position.copy(newPosition);
-      });
       undoStack.push(action);
       break;
   }
@@ -1414,7 +1393,6 @@ window.addEventListener('mouseup', (e) => {
       }
       updateMoveGizmoAxisVisibility(); // <-- Add this line at the end of setView
      updateRotateGizmoAxisVisibility(); // <-- Ensure rotate gizmo rings update when switching views
-     updateScaleGizmoAxisVisibility();  // <-- NEW: ensure scale handles hide/show per ortho
     }
 
     // Save original perspective camera for toggling
@@ -1757,7 +1735,12 @@ function resizeRendererAndCamera() {
 });
 document.getElementById('side-c-btn').addEventListener('click', function(e) {
   e.stopPropagation();
-  // placeholder: top "S" button currently does nothing
+  spawnShape('cube');
+});
+// Added event listener for the duplicated button
+document.getElementById('side-c-btn-2').addEventListener('click', function(e) {
+  e.stopPropagation();
+  spawnShape('cube');
 });
     const boxSelectionBlockerBlock = document.getElementById('box-selection-blocker-block');
 let boxSelectionEnabled = true; // ON by default

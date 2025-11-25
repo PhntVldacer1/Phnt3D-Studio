@@ -1,0 +1,2741 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>3D Viewport with Correct Zoom & Undo/Redo</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background-color: #232323;
+      font-family: Arial, sans-serif;
+    }
+    /* Move UI below the top bar */
+    #ui {
+      display: none;
+    }
+
+    /* Make canvas fit below the bar */
+    #viewport {
+      position: absolute;
+      top: 75px;
+      left: 45px;
+      width: calc(100vw - 45px - 451px); /* <-- updated from 450px */
+      height: calc(100vh - 75px - 75px);
+      display: block;
+      z-index: 1;
+      background: #232323;
+      border-radius: 0;
+      outline: none; /* Remove default focus outline */
+    }
+
+    #viewport:focus {
+      outline: none; /* Remove white line on click/focus */
+    }
+
+    button {
+      /* If you want to keep button styles for view-menu, keep this block */
+      margin: 5px;
+      padding: 10px;
+      font-size: 16px;
+    }
+    .axis-label {
+      position: absolute;
+      font-weight: bold;
+      font-size: 26px; /* slightly bigger */
+      pointer-events: none;
+      user-select: none;
+      text-transform: uppercase;
+      font-family: Arial, sans-serif;
+      transform: translate(-50%, -50%);
+      z-index: 20;
+    }
+    #label-x {
+      color: #b24747; /* red */
+    }
+    #label-y {
+      color: #42ac6e; /* green */
+    }
+    #label-z {
+      color: #215db2; /* blue */
+    }
+    #view-menu {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      position: absolute;
+      background: #232323;
+      border: 2px solid #444;    /* was 1px */
+      border-radius: 10px;
+      z-index: 9999; /* Make sure it's above everything */
+      /* box-shadow: 0 2px 8px #000a; */ /* <-- Remove or comment out this line */
+      padding: 0 0 3px 0;   /* reduced bottom padding from 4px to 3px */
+      margin: 0;
+      min-width: 150px;
+      width: 160px;
+      overflow: hidden;
+      pointer-events: auto;
+    }
+    #view-menu .view-menu-title {
+      text-align: center;
+      font-size: 18px;
+      font-weight: bold;
+      color: #fff;
+      padding: 10px 0 6px 0;
+      letter-spacing: 2px;
+      border-bottom: 2px solid #444; /* was 1px, now 3px for 2px thicker */
+      background: #181818;
+      width: 100%;
+    }
+    #view-menu .view-menu-title .view-menu-text {
+      position: relative;
+      top: -1px; /* Move the "VIEWS" title text 2 pixels more up (was 1px down, now 1px up) */
+    }
+    /* Center the hover background with the text */
+    #view-menu button {
+      display: block;
+      width: 96%;
+      margin: 3px auto 0 auto; /* center button horizontally */
+      background: none;
+      border: none;
+      color: #fff;
+      font-size: 16px;
+      padding: 7px 0; /* remove left padding */
+      text-align: center; /* center the text */
+      cursor: pointer;
+      transition: background 0.15s, border-radius 0.15s;
+      border-radius: 8px;
+      box-sizing: border-box;
+      white-space: nowrap; /* Prevent line break */
+    }
+    #view-menu button:hover {
+      background: #444;
+    }
+
+    .axis-label, #view-menu {
+      display: none;
+    }
+
+    .view-menu-text {
+      position: relative;
+      top: 1px;
+    }
+
+    #box-select {
+  position: fixed;
+  border: 2px dashed #ff8000; /* changed from lime to orange to match selected outline */
+  pointer-events: none;
+  z-index: 200;
+  background: rgba(255,128,0,0.08); /* changed from lime to a subtle orange */
+}
+
+    /* Top bar styles */
+    #top-bar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 29.6px; /* 21.6px + 8px = 29.6px */
+      background: #232323;
+      z-index: 2001;
+      display: flex;
+      align-items: flex-start;
+      padding-left: 0;
+      gap: 0;
+    }
+
+    .topbar-btn {
+  background: #363636; /* darker than #444, lighter than #292929 */
+  color: #fff;
+  border: none;
+  border-radius: 0;
+  font-size: 13px;
+  font-family: inherit;
+  padding: 0 14px;
+  height: 29.6px;
+  margin: 0;
+  cursor: pointer;
+  transition: background 0.15s;
+  z-index: 2002;
+  box-sizing: border-box;
+  line-height: 29.6px;
+  text-transform: uppercase;
+  box-shadow: none;
+  font-weight: bold;
+}
+    .topbar-btn:hover {
+      background: #444;
+    }
+    .topbar-btn:focus {
+  outline: none;
+}
+
+    #top-bar .topbar-btn:last-child {
+  border-radius: 0 8px 8px 0;
+}
+
+    #left-bar {
+      position: fixed;
+      top: 48px;
+      left: 0;
+      width: 45px;
+      height: calc(100vh - 48px - 54px);
+      background: #232323;
+      z-index: 200; /* Must be higher than .axis-label (which is 20) */
+      /* box-shadow: 2px 0 8px #000a; */ /* <-- Remove or comment out this line */
+    }
+
+    #right-bar {
+      position: fixed;
+      top: 48px;
+      right: 0;
+      width: 451px;
+      height: calc(100vh - 48px - 54px);
+      background: #232323;
+      z-index: 201;
+      /* box-shadow: -2px 0 8px #000a; */ /* <-- Remove or comment out this line */
+    }
+
+    #bottom-bar {
+      position: fixed;
+      left: 0;
+      bottom: 0;
+      width: 100vw;
+      height: 75px;
+      background: #232323;
+      z-index: 200; /* Must be higher than .axis-label (which is 20) */
+      /* box-shadow: 0 -2px 8px #000a; */ /* <-- Remove or comment out this line */
+    }
+
+    #frame-bg {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: #232323;
+      z-index: 1000;
+      pointer-events: none;
+      /* The hole matches the viewport area */
+      clip-path: polygon(
+        0 0, 100vw 0, 100vw 75px, 45px 75px, 45px calc(100vh - 75px), 100vw calc(100vh - 75px), 100vw 100vh, 0 100vh, 0 calc(100vh - 75px), 0 75px, 45px 75px, 45px 0
+      );
+      box-shadow: 0 2px 8px #000a, 2px 0 8px #000a, -2px 0 8px #000a, 0 -2px 8px #000a;
+    }
+
+    #viewport-outline {
+      position: absolute;
+      top: 75px;
+      left: 45px;
+      width: calc(100vw - 45px - 451px); /* <-- updated from 450px */
+      height: calc(100vh - 75px - 75px);
+      pointer-events: none;
+      z-index: 99; /* Below the view menu */
+      box-sizing: border-box;
+      border: 2px solid #555; /* Slightly brighter gray */
+      border-radius: 0;
+      background: none;
+    }
+
+    .topbar-btn-text {
+  display: inline-block;
+  /* Remove top: 1px; */
+  transform: translateY(1px);
+  line-height: normal;
+}
+#view-indicator {
+  position: absolute;
+  top: 80px;
+  left: 53px; /* was 55px */
+  color: #fff;
+  font-size: 15px;
+  font-family: Arial, sans-serif;
+  font-weight: bold;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  z-index: 1002;
+  pointer-events: none;
+  user-select: none;
+}
+.side-btn {
+  width: 37px;
+  height: 37px;
+  margin: 8px auto 0 auto;
+  display: block;
+  background: #363636; /* darker than #444, lighter than #292929 */
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 18px;
+  font-family: inherit;
+  font-weight: bold;
+  cursor: pointer;
+  transition: background 0.15s;
+  box-sizing: border-box;
+  text-align: center;
+  line-height: 37px;
+  padding: 0;
+}
+.side-btn:hover {
+  background: #444; /* slightly lighter on hover */
+}
+.side-btn-icon {
+  width: 25px;
+  height: 25px;
+  display: block;
+  margin: 0 auto;
+}
+.move-gizmo-icon {
+  width: 31px;
+  height: 31px;
+  display: block;
+  margin: 0 auto;
+}
+#box-selection-blocker-block:focus {
+  outline: none;
+  box-shadow: none;
+}
+#box-selection-blocker-block {
+  transition: background 0.15s;
+}
+/* ON: hover is lighter blue */
+#box-selection-blocker-block[style*="#0072cf"]:hover,
+#box-selection-blocker-block[style*="rgb(0, 114, 207)"]:hover {
+  background: #2196f3 !important;
+}
+/* OFF: hover is gray */
+#box-selection-blocker-block:hover {
+  background: #444 !important;
+}
+#move-gizmo-btn:focus {
+  outline: none;
+  box-shadow: none;
+}
+#move-gizmo-btn {
+  transition: background 0.15s;
+}
+/* ON: hover is lighter blue */
+#move-gizmo-btn[style*="#0072cf"]:hover,
+#move-gizmo-btn[style*="rgb(0, 114, 207)"]:hover {
+  background: #2196f3 !important;
+}
+/* OFF: hover is gray */
+#move-gizmo-btn:hover {
+  background: #444 !important;
+}
+  </style>
+</head>
+<body>
+  <canvas id="viewport"></canvas>
+<div id="view-indicator">NORMAL VIEW</div>
+
+  <!-- Axis labels -->
+  <div id="label-x" class="axis-label">X</div>
+  <div id="label-y" class="axis-label">Y</div>
+  <div id="label-z" class="axis-label">Z</div>
+
+  <div id="box-select"></div>
+
+  <div id="view-menu">
+    <div class="view-menu-title"><span class="view-menu-text">VIEWS</span></div>
+    <button data-view="normal"><span class="view-menu-text">NORMAL VIEW</span></button>
+    <button data-view="x"><span class="view-menu-text">X VIEW</span></button>
+    <button data-view="y"><span class="view-menu-text">Y VIEW</span></button>
+    <button data-view="z"><span class="view-menu-text">Z VIEW</span></button>
+  </div>
+
+  <div id="frame-bg"></div>
+  <div id="viewport-outline"></div>
+
+  <!-- MOVE THESE TO THE END, AFTER EVERYTHING ELSE -->
+  <div id="top-bar">
+  <button class="topbar-btn"><span class="topbar-btn-text">File</span></button>
+  <button class="topbar-btn"><span class="topbar-btn-text">Render</span></button>
+  <button class="topbar-btn"><span class="topbar-btn-text">Settings</span></button>
+  <button class="topbar-btn"><span class="topbar-btn-text">Chatbot</span></button>
+  <button class="topbar-btn"><span class="topbar-btn-text">MODELING</span></button>
+  <button class="topbar-btn"><span class="topbar-btn-text">2D ANIMATION</span></button>
+  <button class="topbar-btn"><span class="topbar-btn-text">TEXTURES</span></button>
+  <button class="topbar-btn"><span class="topbar-btn-text">Help</span></button>
+  <button class="topbar-btn"><span class="topbar-btn-text">ABOUT</span></button>
+</div>
+  <div id="left-bar"></div>
+  <div id="right-bar"></div>
+  <div id="bottom-bar"></div>
+<button class="side-btn" id="box-selection-blocker-block" style="position:fixed; top:67px; left:4px; z-index:3000; background:#0072cf;">
+  <img src="https://i.ibb.co/DggnJ354/Box-selection-lock-button.png" alt="Box selection" class="side-btn-icon">
+</button>
+<!-- Separator rectangle between box-selection-blocker-block and move-gizmo-btn -->
+<div style="position:fixed; top:116px; left:4px; width:37px; height:2px; background:#555555; border-radius:1px; z-index:3001; pointer-events:none;"></div>
+<button class="side-btn" id="move-gizmo-btn" style="position:fixed; top:114px; left:4px; z-index:3000; background:#0072cf;">
+  <img src="https://i.ibb.co/fGK1mmXV/Box-selection-lock-button-02.png" alt="Move gizmo" class="side-btn-icon move-gizmo-icon">
+</button>
+<button class="side-btn" id="side-o-btn" style="position:fixed; top:155px; left:4px; z-index:3000;">
+  <img src="https://i.ibb.co/G4M16tGs/Artboard-1-2.png" alt="Rotate gizmo" class="side-btn-icon move-gizmo-icon">
+</button>
+<button class="side-btn" id="side-c-btn" style="position:fixed; top:196px; left:4px; z-index:3000;">
+  <img src="https://i.ibb.co/yckHWXSC/Artboard-1-3.png" alt="Scale gizmo" class="side-btn-icon" style="width: 31px; height: 31px;">
+</button>
+
+<!-- Duplicate cube spawner placed the same distance below the original (41px gap) -->
+<button class="side-btn" id="side-c-btn-2" style="position:fixed; top:237px; left:4px; z-index:3000;">
+  <span class="side-btn-text">C</span>
+</button>
+<!-- Add after #box-select or near overlays -->
+<div id="move-indicator-box" style="
+  display:none;
+  position:fixed;
+  min-width:54px;
+  padding:4px 9px;
+  background:#232323;
+  color:#fff;
+  font-size:15px;
+  font-family:Arial,sans-serif;
+  font-weight:bold;
+  border-radius:9px;      /* was 10px, now less rounded */
+  border:2px solid #444;
+  z-index:3002;
+  pointer-events:none;
+  text-align:center;
+"></div>
+
+  <!-- Rotate indicator (shows degrees while rotating gizmo) -->
+  <div id="rotate-indicator-box" style="
+    display:none;
+    position:fixed;
+    min-width:54px;
+    padding:4px 9px;
+    background:#232323;
+    color:#fff;
+    font-size:15px;
+    font-family:Arial,sans-serif;
+    font-weight:bold;
+    border-radius:9px;
+    border:2px solid #444;
+    z-index:3002;
+    pointer-events:none;
+    text-align:center;
+  "></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/three@0.154.0/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.154.0/examples/js/loaders/FontLoader.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.154.0/examples/js/geometries/TextGeometry.js"></script>
+
+  <script>
+    const canvas = document.getElementById('viewport');
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    canvas.tabIndex = 1;
+    canvas.focus();
+    let lastMouse = { x: 0, y: 0 };
+    let lastMouseTarget = canvas;
+    // Try to set lastMouse to the current mouse position if the mouse is over the canvas
+    document.addEventListener('DOMContentLoaded', () => {
+      document.body.addEventListener('mousemove', function initMouse(e) {
+        if (e.target === canvas) {
+          lastMouse.x = e.clientX;
+          lastMouse.y = e.clientY;
+          lastMouseTarget = canvas;
+        }
+        // Remove this listener after the first mousemove
+        document.body.removeEventListener('mousemove', initMouse);
+      });
+    });
+    renderer.setSize(window.innerWidth, window.innerHeight); // Remove - 48
+    renderer.setPixelRatio(window.devicePixelRatio);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x202020);
+
+    let camera = new THREE.PerspectiveCamera(
+      60,
+      window.innerWidth / window.innerHeight, // Remove - 48
+      0.1,
+      1000
+    );
+    camera.position.set(1.85, 1.2, 1.85);
+    let target = new THREE.Vector3(0, 0, 0);
+    camera.lookAt(target);
+
+    // Create three grids: XZ (default), YZ, XY
+    const gridXZ = new THREE.GridHelper(10000, 10000 / 0.5, 0x363636, 0x363636); // default
+    gridXZ.renderOrder = 0;
+    gridXZ.material.depthTest = false;
+    scene.add(gridXZ);
+
+    const gridYZ = new THREE.GridHelper(10000, 10000 / 0.5, 0x363636, 0x363636);
+    gridYZ.rotation.set(0, 0, Math.PI / 2); // YZ plane
+    gridYZ.renderOrder = 0;
+    gridYZ.material.depthTest = false;
+    scene.add(gridYZ);
+
+    const gridXY = new THREE.GridHelper(10000, 10000 / 0.5, 0x363636, 0x363636);
+    gridXY.rotation.set(Math.PI / 2, 0, 0); // XY plane
+    gridXY.renderOrder = 0;
+    gridXY.material.depthTest = false;
+    scene.add(gridXY);
+
+    // Hide all but XZ by default
+    gridXZ.visible = true;
+    gridYZ.visible = false;
+    gridXY.visible = false;
+
+    const origin = new THREE.Vector3(0, 0, 0);
+    const arrowLength = 2;
+    const arrowHeadLength = 0.10;
+    const arrowHeadWidth = 0.045;
+
+    function createArrow(dirVec, color) {
+      const arrow = new THREE.ArrowHelper(dirVec, origin, arrowLength, color.getHex(), arrowHeadLength, arrowHeadWidth);
+
+      // Ensure arrows render after the grid (optional)
+      arrow.renderOrder = 1;
+      arrow.cone.renderOrder = 1;
+      arrow.line.renderOrder = 1;
+
+      // REMOVE these lines so arrows are occluded by shapes
+      // arrow.cone.material.depthTest = false;
+      // arrow.line.material.depthTest = false;
+      // arrow.cone.material.depthWrite = true;
+      // arrow.line.material.depthWrite = true;
+
+      return arrow;
+    }
+
+    const arrowX = createArrow(new THREE.Vector3(1, 0, 0), new THREE.Color('#b24747')); // red
+    const arrowY = createArrow(new THREE.Vector3(0, 1, 0), new THREE.Color('#42ac6e')); // green
+    const arrowZ = createArrow(new THREE.Vector3(0, 0, 1), new THREE.Color('#215db2')); // blue
+
+    scene.add(arrowX);
+    scene.add(arrowY);
+    scene.add(arrowZ);
+
+    const shapes = [];
+    let selectedShape = null;
+    let selectedShapes = []; // <-- Add this line
+
+    const undoStack = [];
+    const redoStack = [];
+
+    function spawnShape(type, recordAction = true) {
+      let geometry, mesh, group, line;
+
+      switch (type) {
+        case 'cube':
+          geometry = new THREE.BoxGeometry(1, 1, 1);
+          break;
+        case 'sphere':
+          geometry = new THREE.SphereGeometry(0.5, 32, 32);
+          break;
+        case 'cylinder':
+          geometry = new THREE.CylinderGeometry(0.5, 0.5, 1, 32);
+          break;
+        case 'cone':
+          geometry = new THREE.ConeGeometry(0.5, 1, 32);
+          break;
+        case 'torus':
+          geometry = new THREE.TorusGeometry(0.5, 0.18, 16, 48);
+          break;
+        case 'plane':
+          geometry = new THREE.PlaneGeometry(1, 1);
+          break;
+        case 'pyramid':
+          geometry = new THREE.ConeGeometry(0.7, 1, 4); // Square base pyramid
+          break;
+        default:
+          return;
+      }
+
+      mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ color: 0x999999 }));
+      const edges = new THREE.EdgesGeometry(geometry);
+      line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x000000, linewidth: 3 }));
+
+      group = new THREE.Group();
+      group.add(mesh);
+      group.add(line);
+
+      // --- Orientation fixes ---
+      if (type === 'torus') {
+        group.rotation.x = Math.PI / 2; // Lay flat
+      }
+      if (type === 'plane') {
+        group.rotation.x = -Math.PI / 2; // Lay flat
+      }
+      if (type === 'pyramid') {
+        group.rotation.y = Math.PI / 4; // Align base with axes
+        // group.rotation.x = -Math.PI / 2; // REMOVE THIS LINE
+      }
+
+      group.position.set(0, 0, 0); // Always spawn at the center
+      scene.add(group);
+      shapes.push(group);
+
+      if (recordAction) {
+        undoStack.push({ type: 'add', shape: group });
+        redoStack.length = 0; // clear redo on new action
+      }
+
+      // Deselect any currently selected shape before selecting the new one
+      deselect();
+      selectShape(group);
+    }
+
+    function selectShape(group, additive = false) {
+      if (!additive) {
+        selectedShapes.forEach(g => {
+          // If it was just pasted, keep lime green, else orange
+          if (g.userData.justPasted) {
+            g.children[1].material.color.set(0x39ff14);
+          } else {
+            g.children[1].material.color.set(0x000000);
+          }
+        });
+        selectedShapes = [];
+      }
+      if (!selectedShapes.includes(group)) {
+        selectedShapes.push(group);
+        // If just pasted, keep lime green, else orange
+        if (group.userData.justPasted) {
+          group.children[1].material.color.set(0x39ff14);
+        } else {
+          group.children[1].material.color.set(0xff8000);
+        }
+      }
+      selectedShape = group;
+      updateMoveGizmoVisibility(); // <-- Add this line
+      updateRotateGizmoVisibility(); // <-- Add this line
+    }
+
+    // When deselecting, revert outline to orange if it was lime green
+    function deselect(group = null) {
+      if (group) {
+        // Always set outline to black and clear justPasted flag
+        group.children[1].material.color.set(0x000000);
+        if (group.userData.justPasted) {
+          delete group.userData.justPasted;
+        }
+        selectedShapes = selectedShapes.filter(g => g !== group);
+        if (selectedShape === group) selectedShape = null;
+      } else {
+        selectedShapes.forEach(g => {
+          g.children[1].material.color.set(0x000000);
+          if (g.userData.justPasted) {
+            delete g.userData.justPasted;
+          }
+        });
+        selectedShapes = [];
+        selectedShape = null;
+      }
+      updateMoveGizmoVisibility(); // <-- Add this line
+      updateRotateGizmoVisibility(); // <-- Add this line
+    }
+
+    function deleteSelectedShape(recordAction = true) {
+      if (selectedShapes.length === 0) return;
+
+      // Store all deleted shapes in one action
+      const deletedShapes = [];
+      selectedShapes.forEach(shape => {
+        scene.remove(shape);
+        const index = shapes.indexOf(shape);
+        if (index !== -1) shapes.splice(index, 1);
+        deletedShapes.push(shape);
+      });
+
+      if (recordAction) {
+        undoStack.push({ type: 'remove-multi', shapes: deletedShapes });
+        redoStack.length = 0; // clear redo on new action
+      }
+
+      deselect();
+    }
+
+    // --- COPY/PASTE/CUT LOGIC ---
+let clipboardShapes = [];
+let clipboardPositions = [];
+let clipboardType = null; // 'copy' or 'cut'
+
+// Helper: deep clone a THREE.Group shape
+function cloneShapeGroup(group) {
+  const clone = group.clone(true);
+  clone.traverse(obj => {
+    if (obj.isMesh && obj.geometry) obj.geometry = obj.geometry.clone();
+    if (obj.isMesh && obj.material) obj.material = obj.material.clone();
+    if (obj.isLineSegments && obj.geometry) obj.geometry = obj.geometry.clone();
+    if (obj.isLineSegments && obj.material) obj.material = obj.material.clone();
+  });
+  return clone;
+}
+
+window.addEventListener('keydown', (e) => {
+  // Ctrl+C (Copy)
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c' && selectedShapes.length > 0) {
+    clipboardShapes = selectedShapes.map(g => cloneShapeGroup(g));
+    clipboardPositions = selectedShapes.map(g => g.position.clone());
+    clipboardType = 'copy';
+    e.preventDefault();
+    return;
+  }
+
+  // Ctrl+X (Cut)
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'x' && selectedShapes.length > 0) {
+    clipboardShapes = selectedShapes.map(g => cloneShapeGroup(g));
+    clipboardPositions = selectedShapes.map(g => g.position.clone());
+    clipboardType = 'cut';
+    deleteSelectedShape();
+    e.preventDefault();
+    return;
+  }
+
+  // Ctrl+V (Paste)
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v' && clipboardShapes.length > 0) {
+    const pastedShapes = clipboardShapes.map((shape, i) => {
+      const clone = cloneShapeGroup(shape);
+      clone.position.copy(clipboardPositions[i]);
+      scene.add(clone);
+      shapes.push(clone);
+      // --- Mark as just pasted ---
+      clone.userData.justPasted = true;
+      // Set outline to lime green
+      if (clone.children[1] && clone.children[1].material) {
+        clone.children[1].material.color.set(0x39ff14); // lime green
+      }
+      return clone;
+    });
+    undoStack.push({ type: 'add-multi', shapes: pastedShapes });
+    redoStack.length = 0;
+    deselect();
+    pastedShapes.forEach(shape => selectShape(shape, true));
+    if (clipboardType === 'cut') {
+      clipboardShapes = [];
+      clipboardPositions = [];
+      clipboardType = null;
+    }
+    e.preventDefault();
+    return;
+  }
+
+  // Removed duplicate R-handler here. R is handled by the main keydown listener later in the file.
+
+  // ...existing code...
+});
+
+// First, let's define action types in a more comprehensive way
+const ActionType = {
+  ADD: 'add',
+  REMOVE: 'remove',
+  MOVE: 'move',
+  ADD_MULTI: 'add-multi',
+  REMOVE_MULTI: 'remove-multi',
+  ROTATE: 'rotate',  // Add this line
+  SCALE: 'scale'     // <-- NEW: scale action type
+};
+
+// Replace the existing undo function
+function undo() {
+  if (undoStack.length === 0) return;
+
+  const action = undoStack.pop();
+  
+  switch(action.type) {
+    case ActionType.ADD:
+    case ActionType.ADD_MULTI:
+      // Remove added shapes
+      const shapesToRemove = Array.isArray(action.shapes) ? action.shapes : [action.shape];
+      shapesToRemove.forEach(shape => {
+        scene.remove(shape);
+        const index = shapes.indexOf(shape);
+        if (index > -1) shapes.splice(index, 1);
+      });
+      deselect();
+      redoStack.push(action);
+      break;
+
+    case ActionType.REMOVE:
+    case ActionType.REMOVE_MULTI:
+      // Restore removed shapes
+      const shapesToRestore = Array.isArray(action.shapes) ? action.shapes : [action.shape];
+      shapesToRestore.forEach(shape => {
+        scene.add(shape);
+        shapes.push(shape);
+      });
+      redoStack.push(action);
+      break;
+
+    case ActionType.MOVE:
+      // Restore previous positions
+      action.shapes.forEach((shape, i) => {
+        shape.position.copy(action.oldPositions[i]);
+      });
+      if (moveGizmo) {
+        let center = new THREE.Vector3();
+        action.shapes.forEach(g => center.add(g.position));
+        center.divideScalar(action.shapes.length);
+        moveGizmo.position.copy(center);
+      }
+      redoStack.push(action);
+      break;
+
+    case ActionType.SCALE:
+      // Restore previous positions & scales
+      action.shapes.forEach((shape, i) => {
+        shape.position.copy(action.oldPositions[i]);
+        shape.scale.copy(action.oldScales[i]);
+      });
+      if (moveGizmo) {
+        let center = new THREE.Vector3();
+        action.shapes.forEach(shape => center.add(shape.position));
+        center.divideScalar(action.shapes.length);
+        moveGizmo.position.copy(center);
+      }
+      redoStack.push(action);
+      break;
+
+    case ActionType.ROTATE:
+      // Restore previous rotations and positions
+      action.shapes.forEach(({ shape, oldRotation, oldPosition }) => {
+        shape.quaternion.copy(oldRotation);
+        shape.position.copy(oldPosition);
+      });
+      // Update rotate gizmo if it exists
+      if (rotateGizmo) {
+        rotateGizmo.quaternion.copy(selectedShapes[0].quaternion);
+        let center = new THREE.Vector3();
+        selectedShapes.forEach(shape => center.add(shape.position));
+        center.divideScalar(selectedShapes.length);
+        rotateGizmo.position.copy(center);
+      }
+      redoStack.push(action);
+      break;
+  }
+}
+
+// Replace the existing redo function
+function redo() {
+  if (redoStack.length === 0) return;
+
+  const action = redoStack.pop();
+
+  switch(action.type) {
+    case ActionType.ADD:
+    case ActionType.ADD_MULTI:
+      // Re-add the shapes
+      const shapesToAdd = Array.isArray(action.shapes) ? action.shapes : [action.shape];
+      shapesToAdd.forEach(shape => {
+        scene.add(shape);
+        shapes.push(shape);
+      });
+      deselect();
+      shapesToAdd.forEach(shape => selectShape(shape, true));
+      undoStack.push(action);
+      break;
+
+    case ActionType.REMOVE:
+    case ActionType.REMOVE_MULTI:
+      // Remove the shapes again
+      const shapesToRemove = Array.isArray(action.shapes) ? action.shapes : [action.shape];
+      shapesToRemove.forEach(shape => {
+        scene.remove(shape);
+        const index = shapes.indexOf(shape);
+        if (index > -1) shapes.splice(index, 1);
+      });
+      deselect();
+      undoStack.push(action);
+      break;
+
+    case ActionType.MOVE:
+      // Restore newer positions
+      action.shapes.forEach((shape, i) => {
+        shape.position.copy(action.newPositions[i]);
+      });
+      if (moveGizmo) {
+        let center = new THREE.Vector3();
+        action.shapes.forEach(g => center.add(g.position));
+        center.divideScalar(action.shapes.length);
+        moveGizmo.position.copy(center);
+      }
+      undoStack.push(action);
+      break;
+
+    case ActionType.SCALE:
+      // Restore newer positions & scales
+      action.shapes.forEach((shape, i) => {
+        shape.position.copy(action.newPositions[i]);
+        shape.scale.copy(action.newScales[i]);
+      });
+      if (moveGizmo) {
+        let center = new THREE.Vector3();
+        action.shapes.forEach(shape => center.add(shape.position));
+        center.divideScalar(action.shapes.length);
+        moveGizmo.position.copy(center);
+      }
+      undoStack.push(action);
+      break;
+
+    case ActionType.ROTATE:
+      // Restore newer rotations and positions
+      action.shapes.forEach(({ shape, newRotation, newPosition }) => {
+        shape.quaternion.copy(newRotation);
+        shape.position.copy(newPosition);
+      });
+      // Update rotate gizmo if it exists
+      if (rotateGizmo) {
+        rotateGizmo.quaternion.copy(selectedShapes[0].quaternion);
+        let center = new THREE.Vector3();
+        selectedShapes.forEach(shape => center.add(shape.position));
+        center.divideScalar(action.shapes.length);
+        rotateGizmo.position.copy(center);
+      }
+      undoStack.push(action);
+      break;
+  }
+}
+
+// Add this to your mouseup event handler where the gizmo movement ends
+window.addEventListener('mouseup', (e) => {
+  if (isMovingWithGizmo && dragStartPositions) {
+    // Record the move/scale action for undo/redo
+    const newPositions = selectedShapes.map(shape => shape.position.clone());
+    if (scaleModeEnabled) {
+      const newScales = selectedShapes.map(shape => shape.scale.clone());
+      undoStack.push({
+        type: ActionType.SCALE,
+        shapes: selectedShapes.slice(),
+        oldPositions: dragStartPositions,
+        newPositions: newPositions,
+        oldScales: dragStartScales,
+        newScales: newScales
+      });
+    } else {
+      undoStack.push({
+        type: ActionType.MOVE,
+        shapes: selectedShapes.slice(), // Make a copy of the array
+        oldPositions: dragStartPositions,
+        newPositions: newPositions
+      });
+    }
+    redoStack.length = 0;
+  }
+  
+  if (isMovingWithGizmo) {
+    suppressNextClick = true; // suppress selection after gizmo drag
+    // --- HIDE MOVE INDICATOR BOX ---
+    const moveIndicatorBox = document.getElementById('move-indicator-box');
+    if (moveIndicatorBox) {
+      moveIndicatorBox.style.display = 'none';
+      // reset outline to default gray so next drag starts with gray
+      moveIndicatorBox.style.borderColor = '#444';
+    }
+  }
+  draggingAxis = null;
+  dragStartMouse = null;
+  dragStartPositions = null;
+  dragStartScales = null;
+  dragStartOffsets = null;
+  dragStartCenter = null;
+  isMovingWithGizmo = false;
+  gizmoAxisOrigin = null;
+  gizmoAxisDir = null;
+  gizmoAxisStartPoint = null;
+});
+    // Camera controls
+    let isRotating = false;
+    let isPanning = false;
+    const minPolarAngle = 0.01;
+    const maxPolarAngle = Math.PI - 0.01;
+
+    let isDragging = false;
+    let wasOrbiting = false; // Add this at the top with other state
+    let blockSelectionAfterOrbit = false; // <-- Add this line
+    let isMovingWithGizmo = false; // <-- Add this line
+    let isDraggingRotateGizmo = false; // <-- NEW: block navigation while rotating gizmo
+    let gizmoGrabOffset = 0; // Add this at the top with other gizmo state
+    let gizmoAxisOrigin = null;
+    let gizmoAxisDir = null;
+    let gizmoAxisStartPoint = null;
+
+    // NEW: Scale-mode state + drag start stores
+let scaleModeEnabled = false;
+let dragStartScales = null;
+let dragStartOffsets = null;
+let dragStartCenter = null;
+let dragInitialHalfExtent = null;
+
+    function onMouseDown(e) {
+      // If user is currently dragging the rotate gizmo, block any navigation start
+      if (isDraggingRotateGizmo) return;
+      dragStartedOnCanvas = (e.target === canvas);
+      if (boxSelecting) return;
+      if (!dragStartedOnCanvas) return;
+      // Prevent orbit/pan if not over canvas
+      if (e.target !== canvas) return;
+
+      // Prevent box selection if over UI or view menu or if menu is active
+      if (isOverUI(e) || (e.target.closest && e.target.closest('#view-menu')) || menuActive) return;
+
+      canvas.focus(); // <-- Add this line
+
+      if (lock2D && usingOrtho) {
+        // In ortho views, only allow middle mouse panning (button 1), not right-click (button 2)
+        if (e.button === 1) {
+          isPanning = true;
+        }
+        isRotating = false;
+        return;
+      }
+      if (e.button === 0 && e.shiftKey) {
+        isRotating = false;
+      }
+      // Only middle mouse (button 1) + Shift for panning in perspective view
+      if (e.button === 1 && e.shiftKey) isPanning = true;
+      lastMouse.x = e.clientX;
+      lastMouse.y = e.clientY;
+    }
+
+    function onMouseUp(e) {
+      if (boxSelecting) return;
+      // Prevent orbit/pan if not over canvas
+      if (e.target !== canvas) return;
+
+      isRotating = false;
+      isPanning = false;
+      isDragging = false;      // <-- Add this line
+      // wasOrbiting = false;     // <-- REMOVE this line
+      blockSelectionAfterOrbit = false; // <-- Add this line
+    }
+
+    function onMouseMove(e) {
+      if (boxSelecting) return;
+     // While dragging the rotate gizmo, block camera orbit/pan behavior entirely
+     if (isDraggingRotateGizmo) {
+       lastMouse.x = e.clientX;
+       lastMouse.y = e.clientY;
+       lastMouseTarget = e.target;
+       return;
+     }
+      if (!dragStartedOnCanvas) return;
+      // Prevent orbit/pan if not over canvas
+      if (e.buttons && e.target !== canvas) return;
+
+      const dx = e.clientX - lastMouse.x;
+      const dy = e.clientY - lastMouse.y;
+
+      if (Math.abs(dx) > 5 || Math.abs(dy) > 5) {
+        isDragging = true;
+        // Only start rotating if Shift+Left is held and mouse is dragged
+        // --- Prevent orbit if moving with gizmo ---
+        if (e.buttons === 1 && e.shiftKey && !isRotating && !isMovingWithGizmo) {
+          // Prevent rotation in ortho views
+          if (!(lock2D && usingOrtho)) {
+            isRotating = true;
+            wasOrbiting = true; // Set this flag if orbiting started
+          }
+          blockSelectionAfterOrbit = true;
+        }
+      }
+
+      lastMouse.x = e.clientX;
+      lastMouse.y = e.clientY;
+      lastMouseTarget = e.target;
+
+      // --- Ortho pan (XYZ views): only if isPanning (middle mouse) ---
+      if (lock2D && usingOrtho && isPanning) {
+        // --- Pixel-perfect ortho panning ---
+        // Calculate world units per pixel
+        let worldPerPixel;
+        if (orthoCamera) {
+          const viewWidth = (orthoCamera.right - orthoCamera.left) / orthoCamera.zoom;
+          const viewHeight = (orthoCamera.top - orthoCamera.bottom) / orthoCamera.zoom;
+          worldPerPixel = {
+            x: viewWidth / window.innerWidth,
+            y: viewHeight / window.innerHeight
+          };
+        } else {
+          worldPerPixel = { x: 1, y: 1 }; // fallback
+        }
+
+        let right = new THREE.Vector3();
+        let up = new THREE.Vector3();
+
+        if (currentOrthoType === 'x') {
+          right.set(0, 0, 1);
+          up.set(0, 1, 0);
+        } else if (currentOrthoType === 'y') {
+          right.set(1, 0, 0);
+          up.set(0, 0, 1);
+        } else if (currentOrthoType === 'z') {
+          right.set(1, 0, 0);
+          up.set(0, 1, 0);
+        }
+
+        if (currentOrthoType === 'z') {
+          target.addScaledVector(right, -dx * worldPerPixel.x);
+          target.addScaledVector(up,    dy * worldPerPixel.y);
+          camera.position.addScaledVector(right, -dx * worldPerPixel.x);
+          camera.position.addScaledVector(up,    dy * worldPerPixel.y);
+        } else {
+          target.addScaledVector(right, dx * worldPerPixel.x);
+          target.addScaledVector(up,    dy * worldPerPixel.y);
+          camera.position.addScaledVector(right, dx * worldPerPixel.x);
+          camera.position.addScaledVector(up, dy * worldPerPixel.y);
+        }
+        return;
+      }
+
+      // --- Perspective controls ---
+      if (lock2D && usingOrtho) {
+        // Block rotation and left-drag in ortho views
+        return;
+      }
+
+      const offset = camera.position.clone().sub(target);
+      const spherical = new THREE.Spherical();
+      spherical.setFromVector3(offset);
+
+      if (isRotating) {
+        spherical.theta -= dx * 0.005;
+        spherical.phi -= dy * 0.005;
+
+        spherical.phi = Math.max(minPolarAngle, Math.min(maxPolarAngle, spherical.phi));
+
+        offset.setFromSpherical(spherical);
+        camera.position.copy(target).add(offset);
+        camera.lookAt(target);
+      } else if (isPanning) {
+        // Lower pan speed for shift+middle mouse (perspective)
+        let panSpeed = 0.0015 * offset.length(); // was 0.002, now a bit lower
+        const right = new THREE.Vector3();
+        camera.getWorldDirection(right);
+        right.cross(camera.up).normalize();
+
+        const up = camera.up.clone().normalize();
+
+        target.addScaledVector(right, -dx * panSpeed);
+        target.addScaledVector(up, dy * panSpeed);
+
+        camera.position.addScaledVector(right, -dx * panSpeed);
+        camera.position.addScaledVector(up, dy * panSpeed);
+      }
+    }
+
+    // Enable zoom in ortho views
+    function onWheel(e) {
+      e.preventDefault();
+
+      if (usingOrtho && lock2D) {
+        // Zoom by changing ortho camera size
+        const zoomSpeed = 1.15; // Increased from 1.05 to 1.15
+        if (e.deltaY < 0) {
+          orthoCamera.zoom *= zoomSpeed;
+        } else {
+          orthoCamera.zoom /= zoomSpeed;
+        }
+        orthoCamera.zoom = Math.max(0.1, Math.min(orthoCamera.zoom, 100));
+        orthoCamera.updateProjectionMatrix();
+        return;
+      }
+
+      const zoomSpeed = 0.001;
+
+      // Use vector from target to camera (not absolute camera position)
+      const offset = camera.position.clone().sub(target);
+      const dist = offset.length();
+
+      // Reverse zoom by changing sign of e.deltaY
+      let newDist = dist * (1 + e.deltaY * zoomSpeed);
+
+      // Clamp zoom distance
+      newDist = Math.min(Math.max(newDist, 0.1), 30);
+
+      offset.setLength(newDist);
+      camera.position.copy(target).add(offset);
+      camera.lookAt(target);
+    }
+
+    // Raycasting for selecting shapes
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2();
+
+    function onClick(e) {
+      // Suppress selection if just finished gizmo move
+      if (window.suppressNextClick) {
+        window.suppressNextClick = false;
+        return;
+      }
+      // Prevent selection if clicking inside the view menu or if menu is active
+      if (
+        (e.target.closest && e.target.closest('#view-menu')) ||
+        menuActive ||
+        isOverUI(e)
+      ) return;
+
+      // Prevent selection if box selection just finished
+      if (boxSelectionJustFinished) {
+        boxSelectionJustFinished = false;
+        return;
+      }
+
+      // Prevent selection if boxSelecting is active (shouldn't happen, but just in case)
+      if (boxSelecting) return;
+
+      // Prevent selection if we were orbiting (Shift+drag)
+      if (wasOrbiting) {
+        isDragging = false;
+        wasOrbiting = false;
+        return;
+      }
+
+      e.preventDefault();
+      e.stopPropagation();
+
+      // Only block selection if mouse is currently being dragged (button is down)
+      if (e.buttons !== 0 && (isDragging || wasOrbiting)) {
+        return;
+      }
+
+      const rect = canvas.getBoundingClientRect();
+      mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+      raycaster.setFromCamera(mouse, camera);
+
+      const intersectObjects = shapes.map(g => g.children[0]);
+      let intersects = raycaster.intersectObjects(intersectObjects);
+      
+      // For thin/plane objects, also check bounding box intersection
+      if (intersects.length === 0) {
+        intersects = intersectObjects
+          .map((mesh, idx) => {
+            mesh.geometry.computeBoundingBox();
+            const bbox = mesh.geometry.boundingBox.clone();
+            bbox.applyMatrix4(mesh.matrixWorld);
+            if (raycaster.ray.intersectsBox(bbox)) {
+              return { object: mesh, distance: raycaster.ray.distanceToPoint(bbox.getCenter(new THREE.Vector3())) };
+            }
+            return null;
+          })
+          .filter(x => x !== null)
+          .sort((a, b) => a.distance - b.distance);
+      }
+      
+      // In ortho views, ALWAYS use the first intersect (closest by distance)
+      // The raycaster automatically sorts by distance, so this is reliable
+      if (intersects.length > 0) {
+        const targetIntersect = intersects[0]; // Take the closest one
+        const intersectedMesh = targetIntersect.object;
+        const group = shapes.find(g => g.children[0] === intersectedMesh);
+        
+        if (group) {
+          if (e.shiftKey) {
+            // Multi-select: toggle selection state
+            if (selectedShapes.includes(group)) {
+              deselect(group);
+            } else {
+              selectShape(group, true);
+            }
+          } else {
+            // Single select: select only this, deselect others
+            deselect();
+            selectShape(group);
+          }
+          isDragging = false;
+          wasOrbiting = false;
+          return;
+        }
+      }
+
+      if (!e.shiftKey) {
+        deselect();
+      }
+      isDragging = false;
+      wasOrbiting = false;
+    }
+
+    // --- VIEW MENU LOGIC ---
+    let orthoCamera = null;
+    let usingOrtho = false;
+    let lock2D = false;
+    let currentOrthoType = null; // Track which ortho view is active
+    const viewMenu = document.getElementById('view-menu');
+    let menuActive = false;
+    let mouseOverMenu = false;
+    let vKeyDown = false; // <-- Add here
+
+    function showViewMenu(x, y) {
+      // If mouse hasn't moved, center the menu in the canvas
+      if (x === 0 && y === 0) {
+        const rect = canvas.getBoundingClientRect();
+        x = rect.left + rect.width / 2;
+        y = rect.top + rect.height / 2;
+      }
+      viewMenu.style.left = x + 'px';
+      viewMenu.style.top = y + 'px';
+      viewMenu.style.display = 'block';
+      menuActive = true;
+    }
+
+    function hideViewMenu() {
+      viewMenu.style.display = 'none';
+      menuActive = false;
+    }
+
+    // Add these event listeners:
+    viewMenu.addEventListener('mouseenter', () => {
+      mouseOverMenu = true;
+    });
+    viewMenu.addEventListener('mouseleave', () => {
+      mouseOverMenu = false;
+    });
+
+    // Margin in pixels around the menu where it won't hide
+    const MENU_MARGIN = 10;
+
+    // Only this mousemove handler is needed:
+    window.addEventListener('mousemove', (e) => {
+      if (!menuActive) return;
+
+      const rect = viewMenu.getBoundingClientRect();
+      const inside =
+        e.clientX >= rect.left - MENU_MARGIN &&
+        e.clientX <= rect.right + MENU_MARGIN &&
+        e.clientY >= rect.top - MENU_MARGIN &&
+        e.clientY <= rect.bottom + MENU_MARGIN;
+
+      if (!inside) {
+        hideViewMenu();
+      }
+    });
+
+    // Store camera/target for each view
+    const viewStates = {
+      normal: { position: camera.position.clone(), target: target.clone() },
+      x: { position: new THREE.Vector3(0.7, 0, 0), target: new THREE.Vector3(0, 0, 0), zoom: 2.2 },
+      y: { position: new THREE.Vector3(0, 0.7, 0), target: new THREE.Vector3(0, 0, 0), zoom: 2.2 },
+      z: { position: new THREE.Vector3(0, 0, 0.7), target: new THREE.Vector3(0, 0, 0), zoom: 2.2 }
+    };
+
+    function setView(type) {
+      // Save current view state before switching
+      if (currentOrthoType === null || currentOrthoType === 'normal') {
+        viewStates.normal.position.copy(camera.position);
+        viewStates.normal.target.copy(target);
+      } else if (currentOrthoType === 'x') {
+        viewStates.x.position.copy(camera.position);
+        viewStates.x.target.copy(target);
+        viewStates.x.zoom = orthoCamera.zoom; // Save zoom
+      } else if (currentOrthoType === 'y') {
+        viewStates.y.position.copy(camera.position);
+        viewStates.y.target.copy(target);
+        viewStates.y.zoom = orthoCamera.zoom; // Save zoom
+      } else if (currentOrthoType === 'z') {
+        viewStates.z.position.copy(camera.position);
+        viewStates.z.target.copy(target);
+        viewStates.z.zoom = orthoCamera.zoom; // Save zoom
+      }
+
+      const viewIndicator = document.getElementById('view-indicator');
+      if (type === 'normal') {
+        if (usingOrtho) {
+          camera = perspCamera;
+          renderer.render(scene, camera);
+          usingOrtho = false;
+          lock2D = false;
+        }
+        // Restore previous perspective view
+        camera.position.copy(viewStates.normal.position);
+        target.copy(viewStates.normal.target);
+        camera.lookAt(target);
+        currentOrthoType = null;
+
+        // Show only XZ grid
+        gridXZ.visible = true;
+        gridYZ.visible = false;
+        gridXY.visible = false;
+
+        // Show all axis arrows and labels
+        arrowX.visible = true;
+        arrowY.visible = true;
+        arrowZ.visible = true;
+        labelX.style.display = "block";
+        labelY.style.display = "block";
+        labelZ.style.display = "block";
+
+        viewIndicator.textContent = 'NORMAL VIEW';
+      } else {
+        // Use actual canvas/viewport size for aspect
+        const { width, height } = getViewportSize();
+        const aspect = width / height;
+        const d = 3;
+        if (!orthoCamera) {
+          orthoCamera = new THREE.OrthographicCamera(
+            -d * aspect, d * aspect, d, -d, -100, 100
+          );
+        } else {
+          orthoCamera.left = -d * aspect;
+          orthoCamera.right = d * aspect;
+          orthoCamera.top = d;
+          orthoCamera.bottom = -d;
+          orthoCamera.updateProjectionMatrix();
+        }
+        camera = orthoCamera;
+        usingOrtho = true;
+        lock2D = true;
+        currentOrthoType = type;
+
+        // Restore previous ortho view position/target
+        camera.position.copy(viewStates[type].position);
+        target.copy(viewStates[type].target);
+        if (viewStates[type].zoom !== undefined) {
+          orthoCamera.zoom = viewStates[type].zoom;
+        } else {
+          orthoCamera.zoom = 2.2; // fallback default
+        }
+        orthoCamera.updateProjectionMatrix();
+
+        // Show only the grid for the current view
+        if (type === 'x') {
+          camera.up.set(0, 1, 0);
+          gridXZ.visible = false;
+          gridYZ.visible = true;
+          gridXY.visible = false;
+
+          // Hide X axis and label
+          arrowX.visible = false;
+          labelX.style.display = "none";
+          // Show others
+          arrowY.visible = true;
+          arrowZ.visible = true;
+          labelY.style.display = "block";
+          labelZ.style.display = "block";
+          viewIndicator.textContent = 'X VIEW';
+        } else if (type === 'y') {
+          camera.up.set(0, 0, 1);
+          gridXZ.visible = true;
+          gridYZ.visible = false;
+          gridXY.visible = false;
+
+          // Hide Y axis and label
+          arrowY.visible = false;
+          labelY.style.display = "none";
+          // Show others
+          arrowX.visible = true;
+          arrowZ.visible = true;
+          labelX.style.display = "block";
+          labelZ.style.display = "block";
+          viewIndicator.textContent = 'Y VIEW';
+        } else if (type === 'z') {
+          camera.up.set(0, 1, 0);
+          gridXZ.visible = false;
+          gridYZ.visible = false;
+          gridXY.visible = true;
+
+          // Hide Z axis and label
+          arrowZ.visible = false;
+          labelZ.style.display = "none";
+          // Show others
+          arrowX.visible = true;
+          arrowY.visible = true;
+          labelX.style.display = "block";
+          labelY.style.display = "block";
+          viewIndicator.textContent = 'Z VIEW';
+        }
+        camera.lookAt(target);
+        camera.updateProjectionMatrix();
+      }
+      updateMoveGizmoAxisVisibility(); // <-- Add this line at the end of setView
+     updateRotateGizmoAxisVisibility(); // <-- Ensure rotate gizmo rings update when switching views
+    }
+
+    // Save original perspective camera for toggling
+    let perspCamera = camera; // <-- CHANGED FROM let perspCamera = camera;
+
+    document.querySelectorAll('#ui button').forEach(btn => {
+      btn.addEventListener('click', e => e.stopPropagation());
+    });
+
+    window.addEventListener('mousedown', onMouseDown);
+    window.addEventListener('mouseup', onMouseUp);
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('wheel', onWheel, { passive: false });
+    canvas.addEventListener('click', onClick);
+    window.addEventListener('keydown', (e) => {
+      // Only allow Space to toggle box selection if mouse is over the canvas (viewport)
+      if (
+        (e.code === 'Space' || e.key === ' ') &&
+        document.elementFromPoint(lastMouse.x, lastMouse.y) === canvas
+      ) {
+        e.preventDefault();
+        boxSelectionBlockerBlock.click();
+        return;
+      }
+
+      // Only allow Move Tool shortcut if mouse is over the canvas (viewport)
+      if (
+        e.key.toLowerCase() === 'm' &&
+        document.elementFromPoint(lastMouse.x, lastMouse.y) === canvas &&
+        !isOverUI(e)
+      ) {
+        moveGizmoBtn.click();
+        return;
+      }
+
+      // Enable Rotate Tool with R if mouse is over canvas (viewport)
+      if (
+        e.key.toLowerCase() === 'r' &&
+        document.elementFromPoint(lastMouse.x, lastMouse.y) === canvas &&
+        !isOverUI(e)
+      ) {
+        // Toggle Rotate (pressing R again turns it off)
+        rotateGizmoEnabled = !rotateGizmoEnabled;
+
+        if (rotateGizmoEnabled) {
+          // Exclusively enable Rotate -> disable other tools
+          moveGizmoEnabled = false;
+          scaleModeEnabled = false;
+
+          document.getElementById('side-o-btn').style.background = '#0072cf';
+          document.getElementById('move-gizmo-btn').style.background = '';
+          const sBtn = document.getElementById('side-c-btn');
+          if (sBtn) sBtn.style.background = '';
+        } else {
+          const sideO = document.getElementById('side-o-btn');
+          if (sideO) sideO.style.background = '';
+        }
+
+        updateMoveGizmoButton();
+        updateMoveGizmoVisibility();
+        updateRotateGizmoVisibility();
+
+        return;
+      }
+
+      if (e.key === 'Delete') {
+        deleteSelectedShape();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+        undo();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+        redo();
+      } else if (
+        e.key.toLowerCase() === 'v' &&
+        !e.ctrlKey && !e.metaKey && !menuActive &&
+        !vKeyDown &&
+        lastMouseTarget === canvas &&
+        (lastMouse.x !== 0 || lastMouse.y !== 0)
+      ) {
+        showViewMenu(lastMouse.x, lastMouse.y);
+        vKeyDown = true;
+      }
+    });
+
+    window.addEventListener('keyup', (e) => {
+      if (e.key.toLowerCase() === 'v') {
+        vKeyDown = false; // Reset flag when V is released
+      }
+      if (e.key === 'Shift') {
+        isRotating = false;
+        isPanning = false;
+      }
+    });
+
+    // Handle menu clicks
+    viewMenu.addEventListener('mousedown', (e) => {
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      e.preventDefault(); // <-- Add this line to block default click-through
+      const btn = e.target.closest('button');
+      if (btn) {
+        setView(btn.dataset.view);
+        hideViewMenu();
+      }
+    });
+
+    viewMenu.addEventListener('click', (e) => {
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      e.preventDefault(); // <-- Add this line to block default click-through
+    });
+
+    function getViewportSize() {
+  return {
+    width: window.innerWidth - 45 - 451, // <-- updated from 450
+    height: window.innerHeight - 75 - 75
+  };
+}
+
+function resizeRendererAndCamera() {
+  const { width, height } = getViewportSize();
+  renderer.setSize(width, height);
+  if (usingOrtho && orthoCamera) {
+    const aspect = width / height;
+    const d = 3;
+    orthoCamera.left = -d * aspect;
+    orthoCamera.right = d * aspect;
+    orthoCamera.top = d;
+    orthoCamera.bottom = -d;
+    orthoCamera.updateProjectionMatrix();
+  } else {
+    camera.aspect = width / height;
+    camera.updateProjectionMatrix();
+  }
+}
+
+    // Update camera on resize
+    window.addEventListener('resize', resizeRendererAndCamera);
+
+    // Initial setup:
+    resizeRendererAndCamera();
+
+    function animate() {
+      requestAnimationFrame(animate);
+      renderer.render(scene, camera);
+      updateAxisLabels();
+
+      // Make gizmo ring always face the camera
+      if (moveGizmo && moveGizmo.ring) {
+        moveGizmo.ring.quaternion.copy(camera.quaternion);
+        // No scaling, just billboard
+      }
+    }
+
+    // Axis labels in screen space
+    const labelX = document.getElementById('label-x');
+    const labelY = document.getElementById('label-y');
+    const labelZ = document.getElementById('label-z');
+
+    function updateAxisLabels() {
+      // Project 3D positions to 2D screen space using canvas rect
+      function projectToScreen(pos) {
+        const vector = pos.clone();
+        vector.project(camera);
+        const rect = canvas.getBoundingClientRect();
+        return {
+          x: rect.left + (vector.x + 1) / 2 * rect.width,
+          y: rect.top + (-vector.y + 1) / 2 * rect.height,
+          inView: vector.x >= -1 && vector.x <= 1 && vector.y >= -1 && vector.y <= 1 && vector.z >= -1 && vector.z <= 1
+        };
+      }
+
+      const offset = 0.05;
+      const posX = projectToScreen(new THREE.Vector3(arrowLength + offset, 0, 0));
+      const posY = projectToScreen(new THREE.Vector3(0, arrowLength + offset, 0));
+      const posZ = projectToScreen(new THREE.Vector3(0, 0, arrowLength + offset));
+
+      // Right bar position and margin for "underlap"
+      const rightBarLeft = window.innerWidth - 420;
+      const RIGHT_UNDERLAP = 20; // px, how much label can go under bar before hiding
+
+      function showLabel(pos, label, orthoType) {
+        label.style.left = pos.x + 'px';
+        label.style.top = pos.y + 'px';
+        // Allow label to go under right bar for RIGHT_UNDERLAP px before hiding
+        const overlapsRightBar = pos.x > (rightBarLeft + RIGHT_UNDERLAP);
+        label.style.display = (pos.inView && currentOrthoType !== orthoType && !overlapsRightBar) ? "block" : "none";
+      }
+
+      showLabel(posX, labelX, 'x');
+      showLabel(posY, labelY, 'y');
+      showLabel(posZ, labelZ, 'z');
+    }
+
+    // --- BOX SELECTION AND CLICK SELECTION LOGIC ---
+
+    let boxSelecting = false;
+    let boxSelectionJustFinished = false;
+    let boxStart = { x: 0, y: 0 };
+    let boxEnd = { x: 0, y: 0 };
+    const boxDiv = document.getElementById('box-select');
+    let mouseDownPos = null;
+    let mouseMovedForBox = false;
+
+    // Helper to get mouse position relative to canvas
+    function getMousePosCanvas(e) {
+      const rect = canvas.getBoundingClientRect();
+      return {
+        x: e.clientX - rect.left,
+        y: e.clientY - rect.top
+      };
+    }
+
+    // Mouse events for box selection and click selection
+    window.addEventListener('mousedown', (e) => {
+      // Only left mouse, not over UI, not menu, and NOT shift
+      if (
+        e.button !== 0 ||
+        isOverUI(e) ||
+        (menuActive && viewMenu.contains(e.target)) ||
+        e.shiftKey ||
+        !boxSelectionEnabled ||
+        isMovingWithGizmo // <--- keep existing
+      ) return;
+
+      // Only start if mouse is over the canvas
+      if (e.target !== canvas) return;
+
+      mouseDownPos = getMousePosCanvas(e);
+      mouseMovedForBox = false;
+      boxSelecting = false;
+      // Add these lines:
+      boxStart = getMousePosCanvas(e);
+      boxEnd = getMousePosCanvas(e);
+    });
+
+    window.addEventListener('mousemove', (e) => {
+      lastMouse.x = e.clientX;
+      lastMouse.y = e.clientY;
+      lastMouseTarget = e.target;
+ 
+      // --- Box selection logic ---
+      if (
+        boxSelectionEnabled &&
+        mouseDownPos && e.buttons === 1 && e.target === canvas && !isOverUI(e) &&
+        !isMovingWithGizmo && !isDraggingRotateGizmo // <-- NEW: don't box-select while rotating gizmo
+      ) {
+        const pos = getMousePosCanvas(e);
+        if (!boxSelecting && (Math.abs(pos.x - mouseDownPos.x) > 4 || Math.abs(pos.y - mouseDownPos.y) > 4)) {
+          boxSelecting = true;
+          boxStart = mouseDownPos;
+        }
+        if (boxSelecting) {
+          boxEnd = pos;
+          updateBoxDiv();
+          mouseMovedForBox = true;
+        }
+      }
+    });
+
+    window.addEventListener('mouseup', (e) => {
+      if (!boxSelectionEnabled || isMovingWithGizmo) return; // <--- ADD isMovingWithGizmo
+
+      if (boxSelecting) {
+        boxSelecting = false;
+        boxDiv.style.display = 'none';
+        performBoxSelection();
+        boxSelectionJustFinished = true;
+        mouseDownPos = null;
+        mouseMovedForBox = false;
+        e.preventDefault();
+        return;
+      }
+      // If mouse was pressed and released on canvas without dragging, treat as click
+      if (
+        mouseDownPos &&
+        e.target === canvas &&
+        !mouseMovedForBox &&
+        !isOverUI(e)
+      ) {
+        // Simulate a click for selection
+        onClick(e);
+      }
+      mouseDownPos = null;
+      mouseMovedForBox = false;
+    });
+
+    // Update the visual selection rectangle
+    function updateBoxDiv() {
+      const minX = Math.min(boxStart.x, boxEnd.x);
+      const minY = Math.min(boxStart.y, boxEnd.y);
+      const maxX = Math.max(boxStart.x, boxEnd.x);
+      const maxY = Math.max(boxStart.y, boxEnd.y);
+      const rect = canvas.getBoundingClientRect();
+      boxDiv.style.left = (rect.left + minX) + 'px';
+      boxDiv.style.top = (rect.top + minY) + 'px';
+      boxDiv.style.width = (maxX - minX) + 'px';
+      boxDiv.style.height = (maxY - minY) + 'px';
+      boxDiv.style.display = (maxX - minX > 4 && maxY - minY > 4) ? 'block' : 'none';
+    }
+
+    // Perform selection of shapes inside the box (by projecting their center)
+    function performBoxSelection() {
+      const rect = canvas.getBoundingClientRect();
+      const minX = Math.min(boxStart.x, boxEnd.x) / rect.width * 2 - 1;
+      const maxX = Math.max(boxStart.x, boxEnd.x) / rect.width * 2 - 1;
+      const minY = -((Math.max(boxStart.y, boxEnd.y) / rect.height) * 2 - 1);
+      const maxY = -((Math.min(boxStart.y, boxEnd.y) / rect.height) * 2 - 1);
+
+      if (Math.abs(boxEnd.x - boxStart.x) < 4 || Math.abs(boxEnd.y - boxStart.y) < 4) return;
+
+      deselect();
+
+      console.log('Selection box NDC:', minX, maxX, minY, maxY);
+      shapes.forEach(group => {
+        group.updateMatrixWorld(true);
+        const mesh = group.children[0];
+        // Get geometry center in local space
+        mesh.geometry.computeBoundingBox();
+        const bbox = mesh.geometry.boundingBox;
+        const center = bbox.getCenter(new THREE.Vector3());
+        // Transform to world space
+        mesh.localToWorld(center);
+        center.project(camera);
+
+        if (
+          center.x >= minX && center.x <= maxX &&
+          center.y >= minY && center.y <= maxY
+        ) {
+          selectShape(group, true);
+        }
+      });
+    }
+
+    function isOverUI(e) {
+      // Check if mouse is over any UI element
+      const uiIds = ['top-bar', 'ui', 'view-menu', 'box-select', 'shape-buttons'];
+      let el = e.target;
+      while (el) {
+        if (el.id && uiIds.includes(el.id)) return true;
+        if (el.classList && el.classList.contains('shape-btn')) return true;
+        el = el.parentElement;
+      }
+      return false;
+    }
+
+    canvas.tabIndex = 1; // Make canvas focusable
+    canvas.focus();      // Focus canvas on load
+    canvas.addEventListener('mousedown', () => canvas.focus()); // Ensure canvas is focused on mousedown
+
+    document.getElementById('side-o-btn').addEventListener('click', function(e) {
+  e.stopPropagation();
+  // spawnShape('torus'); // <-- REMOVE THIS LINE
+});
+document.getElementById('side-c-btn').addEventListener('click', function(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  // Toggle SCALE mode (exclusive)
+  scaleModeEnabled = !scaleModeEnabled;
+
+  if (scaleModeEnabled) {
+    // Exclusively enable Scale -> disable other tools
+    rotateGizmoEnabled = false;
+    moveGizmoEnabled = false;
+
+    // Update visuals
+    const sBtn = document.getElementById('side-c-btn');
+    if (sBtn) sBtn.style.background = '#0072cf';
+    const sideO = document.getElementById('side-o-btn');
+    if (sideO) sideO.style.background = '';
+  } else {
+    const sBtn = document.getElementById('side-c-btn');
+    if (sBtn) sBtn.style.background = '';
+  }
+
+  // Ensure gizmos reflect the new exclusive state
+  updateMoveGizmoVisibility();
+  updateRotateGizmoVisibility();
+});
+
+// Add handler to spawn a cube when the "C" spawn button is clicked
+document.getElementById('side-c-btn-2').addEventListener('click', function(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  spawnShape('cube');
+});
+
+// Add keyboard shortcut for S key
+window.addEventListener('keydown', (e) => {
+  if (
+    e.key.toLowerCase() === 's' &&
+    document.elementFromPoint(lastMouse.x, lastMouse.y) === canvas &&
+    !isOverUI(e)
+  ) {
+    e.preventDefault();
+    document.getElementById('side-c-btn').click();
+    return;
+  }
+});
+    const boxSelectionBlockerBlock = document.getElementById('box-selection-blocker-block');
+let boxSelectionEnabled = true; // ON by default
+
+function updateBoxSelectionButton() {
+  if (boxSelectionEnabled) {
+    boxSelectionBlockerBlock.style.background = '#0072cf';
+  } else {
+    boxSelectionBlockerBlock.style.background = ''; // default from CSS
+  }
+}
+updateBoxSelectionButton();
+
+boxSelectionBlockerBlock.addEventListener('click', function(e) {
+  e.stopPropagation();
+  boxSelectionEnabled = !boxSelectionEnabled;
+  updateBoxSelectionButton();
+});
+
+    const moveGizmoBtn = document.getElementById('move-gizmo-btn');
+let moveGizmoEnabled = true; // ON by default
+
+function updateMoveGizmoButton() {
+  if (moveGizmoEnabled) {
+    moveGizmoBtn.style.background = '#0072cf';
+  } else {
+    moveGizmoBtn.style.background = '';
+  }
+}
+updateMoveGizmoButton();
+
+moveGizmoBtn.addEventListener('click', function(e) {
+  e.stopPropagation();
+  moveGizmoEnabled = !moveGizmoEnabled;
+
+  if (moveGizmoEnabled) {
+    // Exclusively enable Move -> disable other tools
+    rotateGizmoEnabled = false;
+    scaleModeEnabled = false;
+
+    // Reset rotate tool button UI
+    const sideO = document.getElementById('side-o-btn');
+    if (sideO) sideO.style.background = '';
+
+    // Reset scale button UI
+    const sBtn = document.getElementById('side-c-btn');
+    if (sBtn) sBtn.style.background = '';
+
+    updateRotateGizmoVisibility();
+  } else {
+    // when turning Move off, leave others OFF
+  }
+
+  updateMoveGizmoButton();
+  updateMoveGizmoVisibility();
+});
+
+// --- MOVE GIZMO LOGIC ---
+let moveGizmo = null;
+let draggingAxis = null;
+let dragStartMouse = null;
+let dragStartPositions = null;
+
+function createMoveGizmo() {
+  // Remove old gizmo if any
+  if (moveGizmo) {
+    scene.remove(moveGizmo);
+    moveGizmo = null;
+  }
+  // Allow gizmo to be created when either Move OR Scale mode is active
+  if (!(moveGizmoEnabled || scaleModeEnabled) || selectedShapes.length === 0) return;
+
+  moveGizmo = new THREE.Group();
+
+  // Colors: X = red, Y = green, Z = blue
+  const axes = [
+    { dir: new THREE.Vector3(1,0,0), color: 0xb24747, name: 'x' },
+    { dir: new THREE.Vector3(0,1,0), color: 0x42ac6e, name: 'y' },
+    { dir: new THREE.Vector3(0,0,1), color: 0x215db2, name: 'z' }
+  ];
+  const length = 1.5;
+  const headLength = 0.35 * 0.5;
+  const headWidth = 0.18 * 0.5;
+  const lineThickness = 0.035;
+
+  // Get rotation from first selected object
+  const objectRotation = selectedShapes[0].quaternion.clone();
+  moveGizmo.quaternion.copy(objectRotation);
+
+  axes.forEach(axis => {
+    const axisGroup = new THREE.Group();
+    
+    // Create arrow in local space first
+    // HEAD: use cube when SCALE mode is enabled, otherwise use cone (same approximate size)
+    const headSize = headWidth * 1.6; // approximate visual size to match cone
+    let headMesh;
+    const headMat = new THREE.MeshBasicMaterial({
+      color: axis.color,
+      depthTest: false
+    });
+
+    if (scaleModeEnabled) {
+      const boxGeom = new THREE.BoxGeometry(headSize, headSize, headSize);
+      headMesh = new THREE.Mesh(boxGeom, headMat);
+      headMesh.renderOrder = 999;
+      // Place the cube so its near face sits at the gizmo end (approximate)
+      if (axis.name === 'x') {
+        headMesh.position.set(length - headSize / 2, 0, 0);
+      } else if (axis.name === 'y') {
+        headMesh.position.set(0, length - headSize / 2, 0);
+      } else if (axis.name === 'z') {
+        headMesh.position.set(0, 0, length - headSize / 2);
+      }
+    } else {
+      const coneGeom = new THREE.ConeGeometry(headWidth, headLength, 24);
+      headMesh = new THREE.Mesh(coneGeom, headMat);
+      headMesh.renderOrder = 999;
+      // Position cone at the end of axis in local space (original behavior)
+      if (axis.name === 'x') {
+        headMesh.position.set(length - headLength/2, 0, 0);
+        headMesh.rotation.z = -Math.PI/2;
+      } else if (axis.name === 'y') {
+        headMesh.position.set(0, length - headLength/2, 0);
+        headMesh.rotation.x = 0;
+      } else if (axis.name === 'z') {
+        headMesh.position.set(0, 0, length - headLength/2);
+        headMesh.rotation.x = Math.PI/2;
+      }
+    }
+
+    headMesh.userData.axis = axis.name;
+    axisGroup.add(headMesh);
+     moveGizmo.add(axisGroup);
+   });
+
+  // Place at center of selection
+  let center = new THREE.Vector3();
+  selectedShapes.forEach(g => center.add(g.position));
+  center.divideScalar(selectedShapes.length);
+  moveGizmo.position.copy(center);
+
+  // Add view-facing ring
+  if (moveGizmo.ring) {
+    moveGizmo.remove(moveGizmo.ring);
+    moveGizmo.ring = null;
+  }
+
+  const size = 512;
+  const circleCanvas = document.createElement('canvas');
+  circleCanvas.width = size;
+  circleCanvas.height = size;
+  const ctx = circleCanvas.getContext('2d');
+  ctx.clearRect(0, 0, size, size);
+
+  ctx.lineWidth = 64;
+  ctx.strokeStyle = '#fff';
+  ctx.beginPath();
+  ctx.arc(size/2, size/2, size/2 - ctx.lineWidth/2, 0, Math.PI * 2);
+  ctx.stroke();
+
+  const texture = new THREE.CanvasTexture(circleCanvas);
+  texture.anisotropy = renderer.capabilities.getMaxAnisotropy ? renderer.capabilities.getMaxAnisotropy() : 1;
+  texture.needsUpdate = true;
+  const material = new THREE.SpriteMaterial({ 
+    map: texture, 
+    color: 0xffffff, 
+    depthTest: false, 
+    depthWrite: false, 
+    transparent: true 
+  });
+  const sprite = new THREE.Sprite(material);
+  sprite.scale.set(0.13, 0.13, 1);
+  sprite.renderOrder = 10;
+  sprite.userData.isGizmoRing = true;
+  moveGizmo.add(sprite);
+  moveGizmo.ring = sprite;
+
+  scene.add(moveGizmo);
+  updateMoveGizmoAxisVisibility();
+}
+
+function updateMoveGizmoVisibility() {
+  if (moveGizmo) scene.remove(moveGizmo);
+  // Allow the gizmo to be created when either Move OR Scale mode is active
+  if ((moveGizmoEnabled || scaleModeEnabled) && selectedShapes.length > 0) {
+    createMoveGizmo();
+  }
+  // Remove ring reference so it doesn't linger
+}
+
+function updateMoveGizmoAxisVisibility() {
+  if (!moveGizmo) return;
+  moveGizmo.children.forEach(child => {
+    if (!child.children || !child.children[0]) return;
+    const cone = child.children[0];
+    const axis = cone.userData.axis;
+    if (!axis) return;
+    // Hide the axis matching the current ortho view
+    if (
+      (currentOrthoType === 'x' && axis === 'x') ||
+      (currentOrthoType === 'y' && axis === 'y') ||
+      (currentOrthoType === 'z' && axis === 'z')
+    ) {
+      child.visible = false;
+    } else {
+      child.visible = true;
+    }
+  });
+}
+
+// Update gizmo when selection changes or button toggled
+// Call updateMoveGizmoVisibility() after selectShape/deselect and after toggling the button
+
+// --- Drag logic for gizmo ---
+window.addEventListener('mousedown', (e) => {
+  // Allow drag when either Move OR Scale mode is active
+  if (!(moveGizmoEnabled || scaleModeEnabled) || !moveGizmo) return;
+  // --- Prevent move if Shift is held ---
+  if (e.shiftKey) return;
+  // --- Prevent drag if nothing is selected ---
+  if (!selectedShapes || selectedShapes.length === 0) {
+    const moveIndicatorBox = document.getElementById('move-indicator-box');
+    if (moveIndicatorBox) moveIndicatorBox.style.display = 'none';
+    return;
+  }
+  const rect = canvas.getBoundingClientRect();
+  const mouse = new THREE.Vector2(
+    ((e.clientX - rect.left) / rect.width) * 2 - 1,
+    -((e.clientY - rect.top) / rect.height) * 2 + 1
+  );
+  const raycaster = new THREE.Raycaster();
+  raycaster.setFromCamera(mouse, camera);
+  // Flatten all meshes in moveGizmo for raycasting
+  const gizmoMeshes = [];
+  moveGizmo.children.forEach(arrow => {
+    arrow.traverse(obj => {
+      if (obj.isMesh) gizmoMeshes.push(obj);
+    });
+  });
+  const intersects = raycaster.intersectObjects(gizmoMeshes, false);
+  if (intersects.length > 0) {
+    draggingAxis = intersects[0].object.userData.axis;
+    dragStartMouse = { x: e.clientX, y: e.clientY };
+    dragStartPositions = selectedShapes.map(g => g.position.clone());
+    // If scale mode, capture start scales & offsets
+    if (scaleModeEnabled) {
+      dragStartScales = selectedShapes.map(g => g.scale.clone());
+      // compute center and per-shape offset from center
+      dragStartCenter = new THREE.Vector3();
+      selectedShapes.forEach(g => dragStartCenter.add(g.position));
+      dragStartCenter.divideScalar(selectedShapes.length);
+      dragStartOffsets = selectedShapes.map(g => g.position.clone().sub(dragStartCenter));
+      // compute average half-extent along axis to derive scale factor reference
+      const axisNormLocal = (draggingAxis === 'x') ? new THREE.Vector3(1,0,0) :
+                            (draggingAxis === 'y') ? new THREE.Vector3(0,1,0) : new THREE.Vector3(0,0,1);
+      axisNormLocal.applyQuaternion(moveGizmo.quaternion).normalize();
+      let sumAbs = 0;
+      dragStartOffsets.forEach(off => sumAbs += Math.abs(off.dot(axisNormLocal)));
+      dragInitialHalfExtent = (sumAbs / Math.max(1, dragStartOffsets.length));
+      if (dragInitialHalfExtent < 1e-4) dragInitialHalfExtent = 1; // fallback
+    }
+    isMovingWithGizmo = true;
+    mouseDownPos = null;
+    boxSelecting = false;
+    mouseMovedForBox = false;
+
+    // --- STORE AXIS ORIGIN AND DIRECTION IN WORLD SPACE ---
+    gizmoAxisOrigin = moveGizmo.position.clone();
+    gizmoAxisDir = new THREE.Vector3();
+    if (draggingAxis === 'x') gizmoAxisDir.set(1, 0, 0);
+   
+    if (draggingAxis === 'y') gizmoAxisDir.set(0, 1, 0);
+    if (draggingAxis === 'z') gizmoAxisDir.set(0, 0, 1);
+
+
+
+    gizmoAxisDir.applyQuaternion(moveGizmo.quaternion);
+
+    // --- FIND CLOSEST POINT ON AXIS TO MOUSE RAY (INITIAL GRAB POINT) ---
+    const mouseRay = raycaster.ray;
+    gizmoAxisStartPoint = closestPointOnAxisToRay(
+      gizmoAxisOrigin,
+
+      gizmoAxisDir,
+      mouseRay.origin,
+      mouseRay.direction
+    );
+    e.preventDefault();
+
+    // --- SHOW MOVE INDICATOR BOX ---
+    const moveIndicatorBox = document.getElementById('move-indicator-box');
+    moveIndicatorBox.style.display = 'block';
+    moveIndicatorBox.textContent = '0.00';
+    // Position it at the gizmo origin (screen space)
+    const screenPos = worldToScreen(moveGizmo.position, camera, canvas);
+    moveIndicatorBox.style.left = (screenPos.x - moveIndicatorBox.offsetWidth / 2) + 'px';
+    moveIndicatorBox.style.top = (screenPos.y - moveIndicatorBox.offsetHeight / 2) + 'px';
+  }
+});
+
+// --- Drag logic for gizmo ---
+window.addEventListener('mousemove', (e) => {
+  // Allow drag processing when either Move OR Scale mode is active
+  if (!moveGizmo || !draggingAxis || !(moveGizmoEnabled || scaleModeEnabled)) return;
+  // --- Prevent drag if nothing is selected ---
+  if (!selectedShapes || selectedShapes.length === 0) {
+    const moveIndicatorBox = document.getElementById('move-indicator-box');
+    if (moveIndicatorBox) moveIndicatorBox.style.display = 'none';
+    return;
+  }
+  const rect = canvas.getBoundingClientRect();
+  // Get axis direction in world space
+  let axisDir = new THREE.Vector3();
+  if (draggingAxis === 'x') axisDir.set(1, 0, 0);
+  if (draggingAxis === 'y') axisDir.set(0, 1, 0);
+  if (draggingAxis === 'z') axisDir.set(0, 0, 1);
+  axisDir.applyQuaternion(moveGizmo.quaternion);
+
+  // --- FIND NEW CLOSEST POINT ON AXIS TO MOUSE RAY ---
+  const mouse = new THREE.Vector2(
+    ((e.clientX - rect.left) / rect.width) * 2 - 1,
+    -((e.clientY - rect.top) / rect.height) * 2 + 1
+  );
+  const raycaster = new THREE.Raycaster();
+  raycaster.setFromCamera(mouse, camera);
+  const mouseRay = raycaster.ray;
+  const axisOrigin = moveGizmo.position.clone();
+  const axisPointNow = closestPointOnAxisToRay(
+    axisOrigin,
+    axisDir,
+    mouseRay.origin,
+    mouseRay.direction
+  );
+
+  // --- COMPUTE MOVEMENT ALONG AXIS ---
+  let moveAmount = 0;
+  if (gizmoAxisStartPoint) {
+    moveAmount = axisPointNow.clone().sub(gizmoAxisStartPoint).dot(axisDir.clone().normalize());
+  }
+
+  // --- SNAP LOGIC ---
+  const snapActive = e.shiftKey;
+  if (snapActive) {
+    // Snap the moveAmount for both Move and Scale modes to 0.10 units
+    const snapStep = 0.10;
+    moveAmount = Math.round(moveAmount / snapStep) * snapStep;
+  }
+
+  if (scaleModeEnabled) {
+    // SCALE MODE: scale selectedShapes along the dragged axis around selection center
+    const axisNorm = axisDir.clone().normalize();
+    // Compute scale factor relative to initial half-extent
+    const factor = 1 + (moveAmount / Math.max(1e-4, dragInitialHalfExtent));
+    const scaleFactor = Math.max(0, factor);
+    selectedShapes.forEach((g, i) => {
+      // start perpendicular + axis component separation
+      const startOffset = dragStartOffsets[i].clone();
+      const axisComp = axisNorm.clone().multiplyScalar(startOffset.dot(axisNorm));
+      const perp = startOffset.clone().sub(axisComp);
+      const newAxisComp = axisComp.clone().multiplyScalar(scaleFactor);
+      const newOffset = perp.add(newAxisComp);
+      g.position.copy(dragStartCenter.clone().add(newOffset));
+      // scale only along the active axis
+      const startScale = dragStartScales[i];
+      if (draggingAxis === 'x') {
+        g.scale.set(startScale.x * scaleFactor, startScale.y, startScale.z);
+      } else if (draggingAxis === 'y') {
+        g.scale.set(startScale.x, startScale.y * scaleFactor, startScale.z);
+      } else {
+        g.scale.set(startScale.x, startScale.y, startScale.z * scaleFactor);
+      }
+    });
+
+    // Update gizmo position to selection center
+    let center = new THREE.Vector3();
+    selectedShapes.forEach(shape => center.add(shape.position));
+    center.divideScalar(selectedShapes.length);
+    moveGizmo.position.copy(center);
+
+    // Update indicator box for scale (show multiplier)
+    const moveIndicatorBox = document.getElementById('move-indicator-box');
+    if (isMovingWithGizmo && moveIndicatorBox) {
+      // show scale multiplier with two decimals
+      moveIndicatorBox.textContent = scaleFactor.toFixed(2) + (snapActive ? ' (SNAP)' : '');
+      moveIndicatorBox.style.borderColor = snapActive ? '#39ff14' : '#444';
+      const screenPos = worldToScreen(moveGizmo.position, camera, canvas);
+      moveIndicatorBox.style.left = (screenPos.x - moveIndicatorBox.offsetWidth / 2) + 'px';
+      moveIndicatorBox.style.top = (screenPos.y - moveIndicatorBox.offsetHeight / 2) + 'px';
+    }
+  } else {
+    // MOVE MODE: existing translation behavior
+    selectedShapes.forEach((g, i) => {
+      let pos = dragStartPositions[i].clone();
+      pos.add(axisDir.clone().normalize().multiplyScalar(moveAmount));
+      g.position.copy(pos);
+    });
+
+    // Move gizmo itself
+    let center = new THREE.Vector3();
+    selectedShapes.forEach(g => center.add(g.position));
+    center.divideScalar(selectedShapes.length);
+    moveGizmo.position.copy(center);
+
+    // --- UPDATE MOVE INDICATOR BOX ---
+    const moveIndicatorBox = document.getElementById('move-indicator-box');
+    if (isMovingWithGizmo && moveIndicatorBox) {
+      // Show absolute value, max 2. decimals, never negative
+      moveIndicatorBox.textContent = Math.abs(moveAmount).toFixed(2) + (snapActive ? ' (SNAP)' : '');
+      // Outline LIME when snap is active, otherwise default gray
+      moveIndicatorBox.style.borderColor = snapActive ? '#39ff14' : '#444';
+      // Position it at the gizmo origin (screen space)
+      const screenPos = worldToScreen(moveGizmo.position, camera, canvas);
+      moveIndicatorBox.style.left = (screenPos.x - moveIndicatorBox.offsetWidth / 2) + 'px';
+      moveIndicatorBox.style.top = (screenPos.y - moveIndicatorBox.offsetHeight / 2) + 'px';
+    }
+  }
+});
+
+// --- Helper: Closest point on axis to ray ---
+function closestPointOnAxisToRay(axisOrigin, axisDir, rayOrigin, rayDir) {
+  // See: https://math.stackexchange.com/a/1036959
+  const p1 = axisOrigin, d1 = axisDir.clone().normalize();
+  const p2 = rayOrigin, d2 = rayDir.clone().normalize();
+  const w0 = p1.clone().sub(p2);
+  const a = d1.dot(d1);
+  const b = d1.dot(d2);
+  const c = d2.dot(d2);
+  const d = d1.dot(w0);
+  const e = d2.dot(w0);
+  const denom = a * c - b * b;
+  if (Math.abs(denom) < 1e-6) return p1.clone(); // Parallel, just return axis origin
+  const t = (b * e - c * d) / denom;
+  return p1.clone().add(d1.clone().multiplyScalar(t));
+}
+
+// --- Helper: Project world position to screen ---
+function worldToScreen(pos, camera, canvas) {
+  const vector = pos.clone().project(camera);
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: rect.left + (vector.x + 1) / 2 * rect.width,
+    y: rect.top + (-vector.y + 1) / 2 * rect.height
+  };
+}
+
+// --- MOVE GIZMO HOVER LOGIC ---
+window.addEventListener('mousemove', (e) => {
+  // Allow hover effects when either Move OR Scale mode is active
+  if (!(moveGizmoEnabled || scaleModeEnabled) || !moveGizmo || isMovingWithGizmo) return;
+
+  const rect = canvas.getBoundingClientRect();
+  const mouse = new THREE.Vector2(
+    ((e.clientX - rect.left) / rect.width) * 2 - 1,
+    -((e.clientY - rect.top) / rect.height) * 2 + 1
+  );
+  const raycaster = new THREE.Raycaster();
+  raycaster.setFromCamera(mouse, camera);
+
+  // Flatten all arrowhead meshes in moveGizmo for raycasting
+  const gizmoCones = [];
+  moveGizmo.children.forEach(arrow => {
+    arrow.traverse(obj => {
+      if (obj.isMesh && obj.userData.axis) gizmoCones.push(obj);
+    });
+  });
+
+  let found = false;
+  let hovered = null;
+  const intersects = raycaster.intersectObjects(gizmoCones, false);
+  if (intersects.length > 0) {
+    hovered = intersects[0].object;
+    found = true;
+  }
+
+  // Update ring colors
+  gizmoCones.forEach(cone => {
+    let baseColor = 0xffffff;
+    if (cone.userData.axis === 'x') baseColor = 0xb24747;
+    if (cone.userData.axis === 'y') baseColor = 0x42ac6e;
+    if (cone.userData.axis === 'z') baseColor = 0x215db2;
+    // If hovered, brighten the color
+    if (cone === hovered) {
+      // Simple brighten: mix with white
+      const color = new THREE.Color(baseColor).lerp(new THREE.Color(0xffffff), 0.45);
+      cone.material.color.copy(color);
+      cone.material.needsUpdate = true;
+      hoveredGizmoAxis = cone.userData.axis;
+
+     } else {
+      cone.material.color.set(baseColor);
+      cone.material.needsUpdate = true;
+    }
+  });
+
+  if (!found) hoveredGizmoAxis = null;
+});
+
+// --- ROTATE GIZMO LOGIC ---
+let rotateGizmo = null;
+let rotateGizmoEnabled = false;
+let draggingRotationAxis = null;
+let rotationStartAngle = 0;
+let rotationStartQuaternion = new THREE.Quaternion();
+
+function createRotateGizmo() {
+  if (rotateGizmo) {
+    scene.remove(rotateGizmo);
+  }
+  if (!rotateGizmoEnabled || selectedShapes.length === 0) return;
+
+  rotateGizmo = new THREE.Group();
+
+  const radius = 1.2;
+  const tubeWidth = 0.03;
+  const segments = 64;
+
+  // Store base radius so we can scale the gizmo to keep a constant screen size
+  rotateGizmo.userData.baseRadius = radius;
+
+  const axes = [
+    { axis: 'x', color: 0xb24747 }, // red
+    { axis: 'y', color: 0x42ac6e }, // green
+    { axis: 'z', color: 0x215db2 }  // blue
+  ];
+
+  axes.forEach(({ axis, color }) => {
+    const torusGeometry = new THREE.TorusGeometry(radius, tubeWidth, 16, segments);
+    const material = new THREE.MeshBasicMaterial({ 
+      color: color,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.85,
+      depthTest: false     // Add this line
+    });
+    const ring = new THREE.Mesh(torusGeometry, material);
+    ring.userData.axis = axis;
+    ring.renderOrder = 999;  // Add this line
+
+    // Set correct orientation for each axis
+    if (axis === 'x') {
+      ring.rotateY(Math.PI / 2);
+    } else if (axis === 'y') {
+      ring.rotateX(Math.PI / 2);
+    }
+    // Z axis is already correctly oriented
+
+    rotateGizmo.add(ring);
+  });
+  
+  // Position at selection center and match rotation
+  let center = new THREE.Vector3();
+  let combinedRotation = new THREE.Quaternion();
+  
+  selectedShapes.forEach((shape, index) => {
+    center.add(shape.position);
+    if (index === 0) {
+      combinedRotation.copy(shape.quaternion);
+    }
+  });
+  
+  center.divideScalar(selectedShapes.length);
+  rotateGizmo.position.copy(center);
+  rotateGizmo.quaternion.copy(combinedRotation);
+
+  scene.add(rotateGizmo);
+  updateRotateGizmoAxisVisibility();
+}
+
+function updateRotateGizmoAxisVisibility() {
+  if (!rotateGizmo) return;
+  // In ortho views show only the ring that corresponds to the view axis (e.g. X view -> show X ring only).
+  if (usingOrtho && currentOrthoType) {
+    rotateGizmo.children.forEach(ring => {
+      const axis = ring.userData.axis;
+      ring.visible = (axis === currentOrthoType);
+    });
+  } else {
+    // In perspective / normal view show all rings
+    rotateGizmo.children.forEach(ring => {
+      ring.visible = true;
+    });
+  }
+}
+
+function updateRotateGizmoVisibility() {
+  if (rotateGizmo) scene.remove(rotateGizmo);
+  if (rotateGizmoEnabled && selectedShapes.length > 0) {
+    createRotateGizmo();
+  }
+}
+
+// Modify the side-o-btn click handler to only toggle rotation mode
+document.getElementById('side-o-btn').addEventListener('click', function (e) {
+  e.stopPropagation();
+  rotateGizmoEnabled = !rotateGizmoEnabled;
+
+  if (rotateGizmoEnabled) {
+    // Exclusively enable Rotate -> disable other tools
+    this.style.background = '#0072cf';
+    moveGizmoEnabled = false;
+    scaleModeEnabled = false;
+
+    // Reset move and scale button UI
+    updateMoveGizmoButton();
+    const sBtn = document.getElementById('side-c-btn');
+    if (sBtn) sBtn.style.background = '';
+    updateMoveGizmoVisibility();
+  } else {
+    this.style.background = '';
+  }
+
+  updateRotateGizmoVisibility();
+});
+
+// Replace the existing rotate gizmo mousemove handler with this improved version:
+
+let rotateStartPoint = null;
+let rotateCenter = new THREE.Vector3();
+let worldRotationAxis = new THREE.Vector3();
+let rotateStartVector = new THREE.Vector3();
+
+// NEW: cumulative angle state so rotation can go beyond 180°
+let rotateCumulativeAngle = 0;
+let rotateLastVector = new THREE.Vector3();
+
+window.addEventListener('mousedown', (e) => {
+  if (!rotateGizmoEnabled || !rotateGizmo) return;
+  if (e.shiftKey) return;
+
+  const rect = canvas.getBoundingClientRect();
+  const mouse = new THREE.Vector2(
+    ((e.clientX - rect.left) / rect.width) * 2 - 1,
+    -((e.clientY - rect.top) / rect.height) * 2 + 1
+  );
+
+  const raycaster = new THREE.Raycaster();
+  raycaster.setFromCamera(mouse, camera);
+
+  // Only raycast against VISIBLE rings
+  const visibleRings = rotateGizmo.children.filter(ring => ring.visible);
+  const intersects = raycaster.intersectObjects(visibleRings, false);
+  
+  if (intersects.length > 0) {
+    const ring = intersects[0].object;
+    draggingRotationAxis = ring.userData.axis;
+    
+    // Keep the highlight on the dragged ring
+    let baseColor;
+    if (ring.userData.axis === 'x') baseColor = 0xb24747;
+    else if (ring.userData.axis === 'y') baseColor = 0x42ac6e;
+    else baseColor = 0x215db2;
+    
+    const color = new THREE.Color(baseColor).lerp(new THREE.Color(0xffffff), 0.45);
+    ring.material.color.copy(color);
+    ring.material.opacity = 1.0;
+    ring.material.needsUpdate = true;
+
+    // mark that a rotate-gizmo drag is active so other handlers can block navigation
+    isDraggingRotateGizmo = true;
+
+    // Rest of the existing mousedown logic...
+    rotateCenter.copy(rotateGizmo.position);
+    
+    if (draggingRotationAxis === 'x') worldRotationAxis.set(1, 0, 0);
+    else if (draggingRotationAxis === 'y') worldRotationAxis.set(0, 1, 0);
+    else worldRotationAxis.set(0, 0, 1);
+    worldRotationAxis.applyQuaternion(rotateGizmo.quaternion);
+    worldRotationAxis.normalize();
+
+    const rotationPlane = new THREE.Plane();
+    rotationPlane.setFromNormalAndCoplanarPoint(worldRotationAxis, rotateCenter);
+    
+    rotateStartPoint = new THREE.Vector3();
+    raycaster.ray.intersectPlane(rotationPlane, rotateStartPoint);
+    
+    rotateStartVector.copy(rotateStartPoint).sub(rotateCenter);
+    rotateStartVector.projectOnPlane(worldRotationAxis).normalize();
+
+    // Initialize cumulative state so we can accumulate signed deltas per-move
+    rotateCumulativeAngle = 0;
+    rotateLastVector.copy(rotateStartVector);
+
+    selectedShapes.forEach(shape => {
+      shape.userData.startRotation = shape.quaternion.clone();
+      shape.userData.startPosition = shape.position.clone();
+    });
+
+    // Show rotate indicator box
+    const rotateIndicatorBox = document.getElementById('rotate-indicator-box');
+    if (rotateIndicatorBox) {
+      rotateIndicatorBox.style.display = 'block';
+      // If Shift (snap) was held when starting, show integer degrees; otherwise show one decimal
+      const initSnap = e.shiftKey;
+      rotateIndicatorBox.textContent = initSnap ? '0°' : '0.0°';
+      // Outline LIME when starting with snap, otherwise default gray
+      rotateIndicatorBox.style.borderColor = initSnap ? '#39ff14' : '#444';
+      const screenPos = worldToScreen(rotateGizmo.position, camera, canvas);
+      rotateIndicatorBox.style.left = (screenPos.x - rotateIndicatorBox.offsetWidth / 2) + 'px';
+      rotateIndicatorBox.style.top = (screenPos.y - rotateIndicatorBox.offsetHeight / 2) + 'px';
+    }
+
+    e.preventDefault();
+    mouseDownPos = null;
+    boxSelecting = false;
+    mouseMovedForBox = false;
+  }
+});
+
+window.addEventListener('mousemove', (e) => {
+  if (!rotateGizmoEnabled || !rotateGizmo || !draggingRotationAxis || !rotateStartPoint) return;
+
+  const rect = canvas.getBoundingClientRect();
+  const mouse = new THREE.Vector2(
+    ((e.clientX - rect.left) / rect.width) * 2 - 1,
+    -((e.clientY - rect.top) / rect.height) * 2 + 1
+  );
+
+  const raycaster = new THREE.Raycaster();
+  raycaster.setFromCamera(mouse, camera);
+
+  // Project current mouse position onto rotation plane
+  const rotationPlane = new THREE.Plane();
+  rotationPlane.setFromNormalAndCoplanarPoint(worldRotationAxis, rotateCenter);
+  
+  const currentPoint = new THREE.Vector3();
+  if (!raycaster.ray.intersectPlane(rotationPlane, currentPoint)) return;
+
+  // Calculate current vector from center and project to plane
+  const currentVector = currentPoint.clone().sub(rotateCenter);
+  currentVector.projectOnPlane(worldRotationAxis).normalize();
+
+  // Compute signed delta angle between last vector and current vector using atan2
+  // angleDelta = atan2( dot(cross(last, current), axis), dot(last, current) )
+  const dotLC = Math.min(1, Math.max(-1, rotateLastVector.dot(currentVector)));
+  const crossLC = rotateLastVector.clone().cross(currentVector);
+  const signed = crossLC.dot(worldRotationAxis);
+  const angleDelta = Math.atan2(signed, dotLC);
+
+  // Accumulate
+  rotateCumulativeAngle += angleDelta;
+  rotateLastVector.copy(currentVector);
+
+  // Snap logic (like move tool): hold Shift to snap to 5 degrees
+  const snapActive = e.shiftKey;
+  let appliedAngle = rotateCumulativeAngle;
+  if (snapActive) {
+    const snap = Math.PI / 36; // 5 degrees in radians
+    appliedAngle = Math.round(appliedAngle / snap) * snap;
+  }
+
+  // Apply rotation to each selected shape based on cumulative angle
+  selectedShapes.forEach(shape => {
+    // Create rotation quaternion
+    const rotationQuat = new THREE.Quaternion();
+    rotationQuat.setFromAxisAngle(worldRotationAxis, appliedAngle);
+
+    // Reset to start state
+    shape.position.copy(shape.userData.startPosition);
+    shape.quaternion.copy(shape.userData.startRotation);
+
+    // Rotate around center point
+    const localPoint = shape.position.clone().sub(rotateCenter);
+    localPoint.applyQuaternion(rotationQuat);
+    shape.position.copy(rotateCenter).add(localPoint);
+    
+    // Apply rotation to shape
+    shape.quaternion.premultiply(rotationQuat);
+  });
+
+  // Apply rotation to gizmo as well (match first selected)
+  if (selectedShapes[0]) rotateGizmo.quaternion.copy(selectedShapes[0].quaternion);
+
+  // Update gizmo position to match selection center
+  let center = new THREE.Vector3();
+  selectedShapes.forEach(shape => {
+    center.add(shape.position);
+  });
+  center.divideScalar(selectedShapes.length);
+  rotateGizmo.position.copy(center);
+
+  // Update rotate indicator (degrees) — show total accumulated degrees (can exceed 360)
+  const rotateIndicatorBox = document.getElementById('rotate-indicator-box');
+  if (rotateIndicatorBox) {
+    const deg = appliedAngle * 180 / Math.PI;
+    // When snapping, show integer degrees (no .0). Otherwise show one decimal place.
+    const degText = snapActive ? Math.abs(deg).toFixed(0) : Math.abs(deg).toFixed(1);
+    rotateIndicatorBox.textContent = degText + '°' + (snapActive ? ' (SNAP)' : '');
+    // Change outline to LIME when snap is active, otherwise default gray
+    rotateIndicatorBox.style.borderColor = snapActive ? '#39ff14' : '#444';
+    const screenPos = worldToScreen(rotateGizmo.position, camera, canvas);
+    rotateIndicatorBox.style.left = (screenPos.x - rotateIndicatorBox.offsetWidth / 2) + 'px';
+    rotateIndicatorBox.style.top = (screenPos.y - rotateIndicatorBox.offsetHeight / 2) + 'px';
+  }
+});
+
+window.addEventListener('mouseup', () => {
+  if (draggingRotationAxis && rotateGizmo) {
+    // Reset all ring colors
+    rotateGizmo.children.forEach(ring => {
+      let baseColor;
+      if (ring.userData.axis === 'x') baseColor = 0xb24747;
+      else if (ring.userData.axis === 'y') baseColor = 0x42ac6e;
+      else baseColor = 0x215db2;
+      ring.material.color.setHex(baseColor);
+      ring.material.opacity = 0.85;
+      ring.material.needsUpdate = true;
+    });
+
+    // Record rotation for undo/redo
+    const rotationAction = {
+      type: ActionType.ROTATE,
+      shapes: selectedShapes.map(shape => ({
+        shape: shape,
+        oldRotation: shape.userData.startRotation.clone(),
+        newRotation: shape.quaternion.clone(),
+        oldPosition: shape.userData.startPosition.clone(),
+        newPosition: shape.position.clone()
+      }))
+    };
+    undoStack.push(rotationAction);
+    redoStack.length = 0;
+  }
+
+  // Hide rotate indicator box
+  const rotateIndicatorBox = document.getElementById('rotate-indicator-box');
+  if (rotateIndicatorBox) {
+    rotateIndicatorBox.style.display = 'none';
+    // reset outline color to default so next open starts with gray
+    rotateIndicatorBox.style.borderColor = '#444';
+  }
+
+  // stop blocking navigation when rotate drag ends
+  isDraggingRotateGizmo = false;
+
+  draggingRotationAxis = null;
+  rotateStartPoint = null;
+  rotateStartVector.set(0, 0, 0);
+  worldRotationAxis.set(0, 0, 0);
+  
+  selectedShapes.forEach(shape => {
+    delete shape.userData.startRotation;
+    delete shape.userData.startPosition;
+  });
+});
+
+// Add this hover handling code after the other rotate gizmo code:
+
+// Add hover state tracking
+let hoveredRotateRing = null;
+
+// Add mousemove handler for rotate gizmo hover effects
+window.addEventListener('mousemove', (e) => {
+  if (!rotateGizmoEnabled || !rotateGizmo || draggingRotationAxis) return;
+
+  const rect = canvas.getBoundingClientRect();
+  const mouse = new THREE.Vector2(
+    ((e.clientX - rect.left) / rect.width) * 2 - 1,
+    -((e.clientY - rect.top) / rect.height) * 2 + 1
+  );
+  const raycaster = new THREE.Raycaster();
+  raycaster.setFromCamera(mouse, camera);
+
+  // Check for intersections with rotate gizmo rings
+  const intersects = raycaster.intersectObjects(rotateGizmo.children, false);
+  
+  // Reset previously hovered ring if any
+  if (hoveredRotateRing && (!intersects.length || intersects[0].object !== hoveredRotateRing)) {
+    let baseColor;
+    if (hoveredRotateRing.userData.axis === 'x') baseColor = 0xb24747;
+    else if (hoveredRotateRing.userData.axis === 'y') baseColor = 0x42ac6e;
+    else baseColor = 0x215db2;
+    hoveredRotateRing.material.color.setHex(baseColor);
+    hoveredRotateRing.material.opacity = 0.85;
+    hoveredRotateRing.material.needsUpdate = true;
+    hoveredRotateRing = null;
+  }
+
+  // Set new hovered ring
+  if (intersects.length > 0) {
+    const ring = intersects[0].object;
+    if (ring !== hoveredRotateRing) {
+      hoveredRotateRing = ring;
+      let baseColor;
+      if (ring.userData.axis === 'x') baseColor = 0xb24747;
+      else if (ring.userData.axis === 'y') baseColor = 0x42ac6e;
+      else baseColor = 0x215db2;
+      
+      // Brighten the color
+      const color = new THREE.Color(baseColor).lerp(new THREE.Color(0xffffff), 0.45);
+      ring.material.color.copy(color);
+      ring.material.opacity = 1.0;
+      ring.material.needsUpdate = true;
+    }
+  }
+});
+    animate();
+   </script>
+</body>
+</html>

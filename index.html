@@ -374,7 +374,7 @@
   <img src="https://i.ibb.co/G4M16tGs/Artboard-1-2.png" alt="Rotate gizmo" class="side-btn-icon move-gizmo-icon">
 </button>
 <button class="side-btn" id="side-c-btn" style="position:fixed; top:196px; left:4px; z-index:3000;">
-  <span class="side-btn-text">S</span>
+  <img src="https://i.ibb.co/yckHWXSC/Artboard-1-3.png" alt="Scale gizmo" class="side-btn-icon" style="width: 31px; height: 31px;">
 </button>
 
 <!-- Duplicate cube spawner placed the same distance below the original (41px gap) -->
@@ -667,8 +667,6 @@ function cloneShapeGroup(group) {
 }
 
 window.addEventListener('keydown', (e) => {
-  // ...existing code...
-
   // Ctrl+C (Copy)
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c' && selectedShapes.length > 0) {
     clipboardShapes = selectedShapes.map(g => cloneShapeGroup(g));
@@ -716,22 +714,7 @@ window.addEventListener('keydown', (e) => {
     return;
   }
 
-  // Enable Rotate Tool with R if mouse is over canvas (viewport)
-  if (
-    e.key.toLowerCase() === 'r' &&
-    document.elementFromPoint(lastMouse.x, lastMouse.y) === canvas &&
-    !isOverUI(e)
-  ) {
-    // Only activate rotate tool, never toggle off
-    rotateGizmoEnabled = true;
-    moveGizmoEnabled = false;
-    updateMoveGizmoButton();
-    updateMoveGizmoVisibility();
-    updateRotateGizmoVisibility();
-    document.getElementById('side-o-btn').style.background = '#0072cf';
-    document.getElementById('move-gizmo-btn').style.background = '';
-    return;
-  }
+  // Removed duplicate R-handler here. R is handled by the main keydown listener later in the file.
 
   // ...existing code...
 });
@@ -743,7 +726,8 @@ const ActionType = {
   MOVE: 'move',
   ADD_MULTI: 'add-multi',
   REMOVE_MULTI: 'remove-multi',
-  ROTATE: 'rotate'  // Add this line
+  ROTATE: 'rotate',  // Add this line
+  SCALE: 'scale'     // <-- NEW: scale action type
 };
 
 // Replace the existing undo function
@@ -785,6 +769,21 @@ function undo() {
       if (moveGizmo) {
         let center = new THREE.Vector3();
         action.shapes.forEach(g => center.add(g.position));
+        center.divideScalar(action.shapes.length);
+        moveGizmo.position.copy(center);
+      }
+      redoStack.push(action);
+      break;
+
+    case ActionType.SCALE:
+      // Restore previous positions & scales
+      action.shapes.forEach((shape, i) => {
+        shape.position.copy(action.oldPositions[i]);
+        shape.scale.copy(action.oldScales[i]);
+      });
+      if (moveGizmo) {
+        let center = new THREE.Vector3();
+        action.shapes.forEach(shape => center.add(shape.position));
         center.divideScalar(action.shapes.length);
         moveGizmo.position.copy(center);
       }
@@ -857,6 +856,21 @@ function redo() {
       undoStack.push(action);
       break;
 
+    case ActionType.SCALE:
+      // Restore newer positions & scales
+      action.shapes.forEach((shape, i) => {
+        shape.position.copy(action.newPositions[i]);
+        shape.scale.copy(action.newScales[i]);
+      });
+      if (moveGizmo) {
+        let center = new THREE.Vector3();
+        action.shapes.forEach(shape => center.add(shape.position));
+        center.divideScalar(action.shapes.length);
+        moveGizmo.position.copy(center);
+      }
+      undoStack.push(action);
+      break;
+
     case ActionType.ROTATE:
       // Restore newer rotations and positions
       action.shapes.forEach(({ shape, newRotation, newPosition }) => {
@@ -879,22 +893,32 @@ function redo() {
 // Add this to your mouseup event handler where the gizmo movement ends
 window.addEventListener('mouseup', (e) => {
   if (isMovingWithGizmo && dragStartPositions) {
-    // Record the move action for undo/redo
+    // Record the move/scale action for undo/redo
     const newPositions = selectedShapes.map(shape => shape.position.clone());
-    undoStack.push({
-      type: ActionType.MOVE,
-      shapes: selectedShapes.slice(), // Make a copy of the array
-      oldPositions: dragStartPositions,
-      newPositions: newPositions
-    });
+    if (scaleModeEnabled) {
+      const newScales = selectedShapes.map(shape => shape.scale.clone());
+      undoStack.push({
+        type: ActionType.SCALE,
+        shapes: selectedShapes.slice(),
+        oldPositions: dragStartPositions,
+        newPositions: newPositions,
+        oldScales: dragStartScales,
+        newScales: newScales
+      });
+    } else {
+      undoStack.push({
+        type: ActionType.MOVE,
+        shapes: selectedShapes.slice(), // Make a copy of the array
+        oldPositions: dragStartPositions,
+        newPositions: newPositions
+      });
+    }
     redoStack.length = 0;
   }
   
   if (isMovingWithGizmo) {
     suppressNextClick = true; // suppress selection after gizmo drag
     // --- HIDE MOVE INDICATOR BOX ---
-
-
     const moveIndicatorBox = document.getElementById('move-indicator-box');
     if (moveIndicatorBox) {
       moveIndicatorBox.style.display = 'none';
@@ -905,6 +929,9 @@ window.addEventListener('mouseup', (e) => {
   draggingAxis = null;
   dragStartMouse = null;
   dragStartPositions = null;
+  dragStartScales = null;
+  dragStartOffsets = null;
+  dragStartCenter = null;
   isMovingWithGizmo = false;
   gizmoAxisOrigin = null;
   gizmoAxisDir = null;
@@ -925,6 +952,13 @@ window.addEventListener('mouseup', (e) => {
     let gizmoAxisOrigin = null;
     let gizmoAxisDir = null;
     let gizmoAxisStartPoint = null;
+
+    // NEW: Scale-mode state + drag start stores
+let scaleModeEnabled = false;
+let dragStartScales = null;
+let dragStartOffsets = null;
+let dragStartCenter = null;
+let dragInitialHalfExtent = null;
 
     function onMouseDown(e) {
       // If user is currently dragging the rotate gizmo, block any navigation start
@@ -1166,6 +1200,22 @@ window.addEventListener('mouseup', (e) => {
 
       const intersectObjects = shapes.map(g => g.children[0]);
       let intersects = raycaster.intersectObjects(intersectObjects);
+      
+      // For thin/plane objects, also check bounding box intersection
+      if (intersects.length === 0) {
+        intersects = intersectObjects
+          .map((mesh, idx) => {
+            mesh.geometry.computeBoundingBox();
+            const bbox = mesh.geometry.boundingBox.clone();
+            bbox.applyMatrix4(mesh.matrixWorld);
+            if (raycaster.ray.intersectsBox(bbox)) {
+              return { object: mesh, distance: raycaster.ray.distanceToPoint(bbox.getCenter(new THREE.Vector3())) };
+            }
+            return null;
+          })
+          .filter(x => x !== null)
+          .sort((a, b) => a.distance - b.distance);
+      }
       
       // In ortho views, ALWAYS use the first intersect (closest by distance)
       // The raycaster automatically sorts by distance, so this is reliable
@@ -1434,14 +1484,27 @@ window.addEventListener('mouseup', (e) => {
         document.elementFromPoint(lastMouse.x, lastMouse.y) === canvas &&
         !isOverUI(e)
       ) {
-        // Only activate rotate tool, never toggle off
-        rotateGizmoEnabled = true;
-        moveGizmoEnabled = false;
+        // Toggle Rotate (pressing R again turns it off)
+        rotateGizmoEnabled = !rotateGizmoEnabled;
+
+        if (rotateGizmoEnabled) {
+          // Exclusively enable Rotate -> disable other tools
+          moveGizmoEnabled = false;
+          scaleModeEnabled = false;
+
+          document.getElementById('side-o-btn').style.background = '#0072cf';
+          document.getElementById('move-gizmo-btn').style.background = '';
+          const sBtn = document.getElementById('side-c-btn');
+          if (sBtn) sBtn.style.background = '';
+        } else {
+          const sideO = document.getElementById('side-o-btn');
+          if (sideO) sideO.style.background = '';
+        }
+
         updateMoveGizmoButton();
         updateMoveGizmoVisibility();
         updateRotateGizmoVisibility();
-        document.getElementById('side-o-btn').style.background = '#0072cf';
-        document.getElementById('move-gizmo-btn').style.background = '';
+
         return;
       }
 
@@ -1734,13 +1797,49 @@ function resizeRendererAndCamera() {
   // spawnShape('torus'); // <-- REMOVE THIS LINE
 });
 document.getElementById('side-c-btn').addEventListener('click', function(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  // Toggle SCALE mode (exclusive)
+  scaleModeEnabled = !scaleModeEnabled;
+
+  if (scaleModeEnabled) {
+    // Exclusively enable Scale -> disable other tools
+    rotateGizmoEnabled = false;
+    moveGizmoEnabled = false;
+
+    // Update visuals
+    const sBtn = document.getElementById('side-c-btn');
+    if (sBtn) sBtn.style.background = '#0072cf';
+    const sideO = document.getElementById('side-o-btn');
+    if (sideO) sideO.style.background = '';
+  } else {
+    const sBtn = document.getElementById('side-c-btn');
+    if (sBtn) sBtn.style.background = '';
+  }
+
+  // Ensure gizmos reflect the new exclusive state
+  updateMoveGizmoVisibility();
+  updateRotateGizmoVisibility();
+});
+
+// Add handler to spawn a cube when the "C" spawn button is clicked
+document.getElementById('side-c-btn-2').addEventListener('click', function(e) {
+  e.preventDefault();
   e.stopPropagation();
   spawnShape('cube');
 });
-// Added event listener for the duplicated button
-document.getElementById('side-c-btn-2').addEventListener('click', function(e) {
-  e.stopPropagation();
-  spawnShape('cube');
+
+// Add keyboard shortcut for S key
+window.addEventListener('keydown', (e) => {
+  if (
+    e.key.toLowerCase() === 's' &&
+    document.elementFromPoint(lastMouse.x, lastMouse.y) === canvas &&
+    !isOverUI(e)
+  ) {
+    e.preventDefault();
+    document.getElementById('side-c-btn').click();
+    return;
+  }
 });
     const boxSelectionBlockerBlock = document.getElementById('box-selection-blocker-block');
 let boxSelectionEnabled = true; // ON by default
@@ -1775,14 +1874,25 @@ updateMoveGizmoButton();
 moveGizmoBtn.addEventListener('click', function(e) {
   e.stopPropagation();
   moveGizmoEnabled = !moveGizmoEnabled;
-  // If turning Move ON, ensure Rotate is turned OFF (only one tool active)
+
   if (moveGizmoEnabled) {
+    // Exclusively enable Move -> disable other tools
     rotateGizmoEnabled = false;
+    scaleModeEnabled = false;
+
     // Reset rotate tool button UI
     const sideO = document.getElementById('side-o-btn');
     if (sideO) sideO.style.background = '';
+
+    // Reset scale button UI
+    const sBtn = document.getElementById('side-c-btn');
+    if (sBtn) sBtn.style.background = '';
+
     updateRotateGizmoVisibility();
+  } else {
+    // when turning Move off, leave others OFF
   }
+
   updateMoveGizmoButton();
   updateMoveGizmoVisibility();
 });
@@ -1799,7 +1909,8 @@ function createMoveGizmo() {
     scene.remove(moveGizmo);
     moveGizmo = null;
   }
-  if (!moveGizmoEnabled || selectedShapes.length === 0) return;
+  // Allow gizmo to be created when either Move OR Scale mode is active
+  if (!(moveGizmoEnabled || scaleModeEnabled) || selectedShapes.length === 0) return;
 
   moveGizmo = new THREE.Group();
 
@@ -1822,30 +1933,47 @@ function createMoveGizmo() {
     const axisGroup = new THREE.Group();
     
     // Create arrow in local space first
-    const coneGeom = new THREE.ConeGeometry(headWidth, headLength, 24);
-    const coneMat = new THREE.MeshBasicMaterial({ 
-      color: axis.color, 
+    // HEAD: use cube when SCALE mode is enabled, otherwise use cone (same approximate size)
+    const headSize = headWidth * 1.6; // approximate visual size to match cone
+    let headMesh;
+    const headMat = new THREE.MeshBasicMaterial({
+      color: axis.color,
       depthTest: false
     });
-    const cone = new THREE.Mesh(coneGeom, coneMat);
-    cone.renderOrder = 999;
 
-    // Position cone at the end of axis in local space
-    if (axis.name === 'x') {
-      cone.position.set(length - headLength/2, 0, 0);
-      cone.rotation.z = -Math.PI/2;
-    } else if (axis.name === 'y') {
-      cone.position.set(0, length - headLength/2, 0);
-      cone.rotation.x = 0;
-    } else if (axis.name === 'z') {
-      cone.position.set(0, 0, length - headLength/2);
-      cone.rotation.x = Math.PI/2;
+    if (scaleModeEnabled) {
+      const boxGeom = new THREE.BoxGeometry(headSize, headSize, headSize);
+      headMesh = new THREE.Mesh(boxGeom, headMat);
+      headMesh.renderOrder = 999;
+      // Place the cube so its near face sits at the gizmo end (approximate)
+      if (axis.name === 'x') {
+        headMesh.position.set(length - headSize / 2, 0, 0);
+      } else if (axis.name === 'y') {
+        headMesh.position.set(0, length - headSize / 2, 0);
+      } else if (axis.name === 'z') {
+        headMesh.position.set(0, 0, length - headSize / 2);
+      }
+    } else {
+      const coneGeom = new THREE.ConeGeometry(headWidth, headLength, 24);
+      headMesh = new THREE.Mesh(coneGeom, headMat);
+      headMesh.renderOrder = 999;
+      // Position cone at the end of axis in local space (original behavior)
+      if (axis.name === 'x') {
+        headMesh.position.set(length - headLength/2, 0, 0);
+        headMesh.rotation.z = -Math.PI/2;
+      } else if (axis.name === 'y') {
+        headMesh.position.set(0, length - headLength/2, 0);
+        headMesh.rotation.x = 0;
+      } else if (axis.name === 'z') {
+        headMesh.position.set(0, 0, length - headLength/2);
+        headMesh.rotation.x = Math.PI/2;
+      }
     }
 
-    cone.userData.axis = axis.name;
-    axisGroup.add(cone);
-    moveGizmo.add(axisGroup);
-  });
+    headMesh.userData.axis = axis.name;
+    axisGroup.add(headMesh);
+     moveGizmo.add(axisGroup);
+   });
 
   // Place at center of selection
   let center = new THREE.Vector3();
@@ -1895,7 +2023,8 @@ function createMoveGizmo() {
 
 function updateMoveGizmoVisibility() {
   if (moveGizmo) scene.remove(moveGizmo);
-  if (moveGizmoEnabled && selectedShapes.length > 0) {
+  // Allow the gizmo to be created when either Move OR Scale mode is active
+  if ((moveGizmoEnabled || scaleModeEnabled) && selectedShapes.length > 0) {
     createMoveGizmo();
   }
   // Remove ring reference so it doesn't linger
@@ -1926,7 +2055,8 @@ function updateMoveGizmoAxisVisibility() {
 
 // --- Drag logic for gizmo ---
 window.addEventListener('mousedown', (e) => {
-  if (!moveGizmoEnabled || !moveGizmo) return;
+  // Allow drag when either Move OR Scale mode is active
+  if (!(moveGizmoEnabled || scaleModeEnabled) || !moveGizmo) return;
   // --- Prevent move if Shift is held ---
   if (e.shiftKey) return;
   // --- Prevent drag if nothing is selected ---
@@ -1954,6 +2084,23 @@ window.addEventListener('mousedown', (e) => {
     draggingAxis = intersects[0].object.userData.axis;
     dragStartMouse = { x: e.clientX, y: e.clientY };
     dragStartPositions = selectedShapes.map(g => g.position.clone());
+    // If scale mode, capture start scales & offsets
+    if (scaleModeEnabled) {
+      dragStartScales = selectedShapes.map(g => g.scale.clone());
+      // compute center and per-shape offset from center
+      dragStartCenter = new THREE.Vector3();
+      selectedShapes.forEach(g => dragStartCenter.add(g.position));
+      dragStartCenter.divideScalar(selectedShapes.length);
+      dragStartOffsets = selectedShapes.map(g => g.position.clone().sub(dragStartCenter));
+      // compute average half-extent along axis to derive scale factor reference
+      const axisNormLocal = (draggingAxis === 'x') ? new THREE.Vector3(1,0,0) :
+                            (draggingAxis === 'y') ? new THREE.Vector3(0,1,0) : new THREE.Vector3(0,0,1);
+      axisNormLocal.applyQuaternion(moveGizmo.quaternion).normalize();
+      let sumAbs = 0;
+      dragStartOffsets.forEach(off => sumAbs += Math.abs(off.dot(axisNormLocal)));
+      dragInitialHalfExtent = (sumAbs / Math.max(1, dragStartOffsets.length));
+      if (dragInitialHalfExtent < 1e-4) dragInitialHalfExtent = 1; // fallback
+    }
     isMovingWithGizmo = true;
     mouseDownPos = null;
     boxSelecting = false;
@@ -1995,7 +2142,8 @@ window.addEventListener('mousedown', (e) => {
 
 // --- Drag logic for gizmo ---
 window.addEventListener('mousemove', (e) => {
-  if (!moveGizmoEnabled || !moveGizmo || !draggingAxis) return;
+  // Allow drag processing when either Move OR Scale mode is active
+  if (!moveGizmo || !draggingAxis || !(moveGizmoEnabled || scaleModeEnabled)) return;
   // --- Prevent drag if nothing is selected ---
   if (!selectedShapes || selectedShapes.length === 0) {
     const moveIndicatorBox = document.getElementById('move-indicator-box');
@@ -2033,36 +2181,80 @@ window.addEventListener('mousemove', (e) => {
   }
 
   // --- SNAP LOGIC ---
-
-  let snapActive = e.shiftKey;
+  const snapActive = e.shiftKey;
   if (snapActive) {
+    // Snap the moveAmount for both Move and Scale modes to 0.10 units
     const snapStep = 0.10;
     moveAmount = Math.round(moveAmount / snapStep) * snapStep;
   }
 
-  selectedShapes.forEach((g, i) => {
-    let pos = dragStartPositions[i].clone();
-    pos.add(axisDir.clone().normalize().multiplyScalar(moveAmount));
-    g.position.copy(pos);
-  });
+  if (scaleModeEnabled) {
+    // SCALE MODE: scale selectedShapes along the dragged axis around selection center
+    const axisNorm = axisDir.clone().normalize();
+    // Compute scale factor relative to initial half-extent
+    const factor = 1 + (moveAmount / Math.max(1e-4, dragInitialHalfExtent));
+    const scaleFactor = Math.max(0, factor);
+    selectedShapes.forEach((g, i) => {
+      // start perpendicular + axis component separation
+      const startOffset = dragStartOffsets[i].clone();
+      const axisComp = axisNorm.clone().multiplyScalar(startOffset.dot(axisNorm));
+      const perp = startOffset.clone().sub(axisComp);
+      const newAxisComp = axisComp.clone().multiplyScalar(scaleFactor);
+      const newOffset = perp.add(newAxisComp);
+      g.position.copy(dragStartCenter.clone().add(newOffset));
+      // scale only along the active axis
+      const startScale = dragStartScales[i];
+      if (draggingAxis === 'x') {
+        g.scale.set(startScale.x * scaleFactor, startScale.y, startScale.z);
+      } else if (draggingAxis === 'y') {
+        g.scale.set(startScale.x, startScale.y * scaleFactor, startScale.z);
+      } else {
+        g.scale.set(startScale.x, startScale.y, startScale.z * scaleFactor);
+      }
+    });
 
-  // Move gizmo itself
-  let center = new THREE.Vector3();
-  selectedShapes.forEach(g => center.add(g.position));
-  center.divideScalar(selectedShapes.length);
-  moveGizmo.position.copy(center);
+    // Update gizmo position to selection center
+    let center = new THREE.Vector3();
+    selectedShapes.forEach(shape => center.add(shape.position));
+    center.divideScalar(selectedShapes.length);
+    moveGizmo.position.copy(center);
 
-  // --- UPDATE MOVE INDICATOR BOX ---
-  const moveIndicatorBox = document.getElementById('move-indicator-box');
-  if (isMovingWithGizmo && moveIndicatorBox) {
-    // Show absolute value, max 2. decimals, never negative
-    moveIndicatorBox.textContent = Math.abs(moveAmount).toFixed(2) + (snapActive ? ' (SNAP)' : '');
-    // Outline LIME when snap is active, otherwise default gray
-    moveIndicatorBox.style.borderColor = snapActive ? '#39ff14' : '#444';
-    // Position it at the gizmo origin (screen space)
-    const screenPos = worldToScreen(moveGizmo.position, camera, canvas);
-    moveIndicatorBox.style.left = (screenPos.x - moveIndicatorBox.offsetWidth / 2) + 'px';
-    moveIndicatorBox.style.top = (screenPos.y - moveIndicatorBox.offsetHeight / 2) + 'px';
+    // Update indicator box for scale (show multiplier)
+    const moveIndicatorBox = document.getElementById('move-indicator-box');
+    if (isMovingWithGizmo && moveIndicatorBox) {
+      // show scale multiplier with two decimals
+      moveIndicatorBox.textContent = scaleFactor.toFixed(2) + (snapActive ? ' (SNAP)' : '');
+      moveIndicatorBox.style.borderColor = snapActive ? '#39ff14' : '#444';
+      const screenPos = worldToScreen(moveGizmo.position, camera, canvas);
+      moveIndicatorBox.style.left = (screenPos.x - moveIndicatorBox.offsetWidth / 2) + 'px';
+      moveIndicatorBox.style.top = (screenPos.y - moveIndicatorBox.offsetHeight / 2) + 'px';
+    }
+  } else {
+    // MOVE MODE: existing translation behavior
+    selectedShapes.forEach((g, i) => {
+      let pos = dragStartPositions[i].clone();
+      pos.add(axisDir.clone().normalize().multiplyScalar(moveAmount));
+      g.position.copy(pos);
+    });
+
+    // Move gizmo itself
+    let center = new THREE.Vector3();
+    selectedShapes.forEach(g => center.add(g.position));
+    center.divideScalar(selectedShapes.length);
+    moveGizmo.position.copy(center);
+
+    // --- UPDATE MOVE INDICATOR BOX ---
+    const moveIndicatorBox = document.getElementById('move-indicator-box');
+    if (isMovingWithGizmo && moveIndicatorBox) {
+      // Show absolute value, max 2. decimals, never negative
+      moveIndicatorBox.textContent = Math.abs(moveAmount).toFixed(2) + (snapActive ? ' (SNAP)' : '');
+      // Outline LIME when snap is active, otherwise default gray
+      moveIndicatorBox.style.borderColor = snapActive ? '#39ff14' : '#444';
+      // Position it at the gizmo origin (screen space)
+      const screenPos = worldToScreen(moveGizmo.position, camera, canvas);
+      moveIndicatorBox.style.left = (screenPos.x - moveIndicatorBox.offsetWidth / 2) + 'px';
+      moveIndicatorBox.style.top = (screenPos.y - moveIndicatorBox.offsetHeight / 2) + 'px';
+    }
   }
 });
 
@@ -2094,10 +2286,9 @@ function worldToScreen(pos, camera, canvas) {
 }
 
 // --- MOVE GIZMO HOVER LOGIC ---
-let hoveredGizmoAxis = null;
-
 window.addEventListener('mousemove', (e) => {
-  if (!moveGizmoEnabled || !moveGizmo || isMovingWithGizmo) return;
+  // Allow hover effects when either Move OR Scale mode is active
+  if (!(moveGizmoEnabled || scaleModeEnabled) || !moveGizmo || isMovingWithGizmo) return;
 
   const rect = canvas.getBoundingClientRect();
   const mouse = new THREE.Vector2(
@@ -2246,9 +2437,15 @@ document.getElementById('side-o-btn').addEventListener('click', function (e) {
   rotateGizmoEnabled = !rotateGizmoEnabled;
 
   if (rotateGizmoEnabled) {
+    // Exclusively enable Rotate -> disable other tools
     this.style.background = '#0072cf';
     moveGizmoEnabled = false;
+    scaleModeEnabled = false;
+
+    // Reset move and scale button UI
     updateMoveGizmoButton();
+    const sBtn = document.getElementById('side-c-btn');
+    if (sBtn) sBtn.style.background = '';
     updateMoveGizmoVisibility();
   } else {
     this.style.background = '';

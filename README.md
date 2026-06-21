@@ -1,6 +1,6 @@
 # Phnt3D Studio
 
-Phnt3D Studio is a web-based 3D software that is pretty powerful
+Phnt3D Studio is a web-based 3D software and it's pretty powerful
 
 <img width="1920" height="949" alt="Screenshot 2026-06-20 224746" src="https://github.com/user-attachments/assets/74458ccb-1c9f-4b90-a8fb-a2c657e88d31" />
 

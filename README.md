@@ -8,4 +8,4 @@ It is still currently in alpha, but it still got a lot of features and will be u
 
 # Try it yourself
 - You can acces the software here https://phntvldacer1.github.io/Phnt3D-Studio/
-- The software will get it's own custom domain after the first version (v1.0) will release alongside with an installer for people who want to install it in their computers
+- The software will get it's own custom domain after the first version (v1.0) will release alongside with an installer for people who want to install on their computers

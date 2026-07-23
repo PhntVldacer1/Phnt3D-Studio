@@ -2,7 +2,7 @@
 
 Phnt3D Studio is a web-based 3D software and it's pretty powerful
 
-<img width="1920" height="949" alt="Screenshot 2026-06-20 224746" src="https://github.com/user-attachments/assets/74458ccb-1c9f-4b90-a8fb-a2c657e88d31" />
+<img width="1920" height="953" alt="Screenshot 2026-07-23 145303" src="https://github.com/user-attachments/assets/40e7cde3-2c41-47d9-9307-17edd298cd83" />
 
 It is still currently in alpha, but it still got a lot of features and will be updated every few months with some big updates!
 
